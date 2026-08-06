@@ -203,9 +203,8 @@ def report_anomaly(overall_tier, frame, timestamp):
     body = f"An anomaly of tier '{overall_tier}' was detected at {timestamp}."
 
     if is_internet_available():
-        success = send_email(subject, body, frame)
-        if not success:
-            log_anomaly_locally(subject, body, frame, timestamp)
+        send_email(subject, body, frame)
+        log_anomaly_locally(subject, body, frame, timestamp)
     else:
         log_anomaly_locally(subject, body, frame, timestamp)
 
