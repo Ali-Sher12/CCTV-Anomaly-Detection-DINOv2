@@ -77,6 +77,11 @@ if __name__ == "__main__":
                 frame_eligible = Acc.is_frame_eligible(raw_tier_grid, zone_grid_high_priority, gb.allowed_error)
                 Acc.self_fix_calibration(gb.calibration_array, embeddings, nearest_slot_per_patch, frame_eligible)
 
+                ##### Anomaly Reporting #####
+                highlighted_frame = Acc.draw_overlay(frame, gb.current_highlight)
+                Acc.handle_anomaly_reporting(overall_tier, highlighted_frame)
+                ##############################
+
         processed_frame = Acc.draw_overlay(frame, gb.current_highlight)
 
         ##############################################

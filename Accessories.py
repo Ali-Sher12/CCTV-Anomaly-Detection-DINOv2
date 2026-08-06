@@ -3,6 +3,13 @@ import torch
 import cv2
 import Globals as gb
 import numpy as np
+import socket
+import smtplib
+import threading
+import os
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from email.mime.image import MIMEImage
 from transformers import AutoImageProcessor, AutoModel
 
 _start = time.perf_counter()
@@ -135,3 +142,105 @@ def draw_overlay(frame, current_highlight, alpha=0.45):
     cv2.putText(result, overall_tier, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, label_color, 2)
 
     return result
+
+
+#############   Anomaly Reporting    #############
+
+def is_internet_available(host="8.8.8.8", port=53, timeout=3):
+    """Quick connectivity check. Tries to open a socket to Google's DNS.
+    Fails fast (within `timeout` seconds) instead of letting smtplib hang."""
+    try:
+        socket.setdefaulttimeout(timeout)
+        socket.socket(socket.AF_INET, socket.SOCK_STREAM).connect((host, port))
+        return True
+    except OSError:
+        return False
+
+
+def send_email(subject, body, frame):
+    """Builds and sends an email with the highlighted frame attached as a jpg.
+    Returns True on success, False on any failure (so the caller can fall back to logging)."""
+    try:
+        msg = MIMEMultipart()
+        msg["From"] = gb.EMAIL_SENDER
+        msg["To"] = gb.EMAIL_RECEIVER
+        msg["Subject"] = subject
+        msg.attach(MIMEText(body, "plain"))
+
+        success, encoded_image = cv2.imencode(".jpg", frame)
+        if success:
+            image_attachment = MIMEImage(encoded_image.tobytes(), name="anomaly.jpg")
+            msg.attach(image_attachment)
+
+        with smtplib.SMTP(gb.SMTP_SERVER, gb.SMTP_PORT, timeout=10) as server:
+            server.starttls()
+            server.login(gb.EMAIL_SENDER, gb.EMAIL_PASSWORD)
+            server.send_message(msg)
+        return True
+    except Exception as e:
+        print("Email send failed:", e)
+        return False
+
+
+def log_anomaly_locally(subject, body, frame, timestamp):
+    """Fallback used when there's no internet. Appends a line to a text log
+    and saves the highlighted frame as a jpg, both inside gb.LOG_DIR."""
+    os.makedirs(gb.LOG_DIR, exist_ok=True)
+
+    log_path = os.path.join(gb.LOG_DIR, "anomaly_log.txt")
+    with open(log_path, "a") as f:
+        f.write(f"[{timestamp}] {subject} - {body}\n")
+
+    image_path = os.path.join(gb.LOG_DIR, f"anomaly_{timestamp}.jpg")
+    cv2.imwrite(image_path, frame)
+
+
+def report_anomaly(overall_tier, frame, timestamp):
+    """Runs on a background thread. Decides email vs local log, and executes it.
+    This function itself is blocking, but since it runs in its own thread,
+    the main video loop never waits on it."""
+    subject = f"Anomaly Detected: {overall_tier}"
+    body = f"An anomaly of tier '{overall_tier}' was detected at {timestamp}."
+
+    if is_internet_available():
+        success = send_email(subject, body, frame)
+        if not success:
+            log_anomaly_locally(subject, body, frame, timestamp)
+    else:
+        log_anomaly_locally(subject, body, frame, timestamp)
+
+
+def _dispatch_report(overall_tier, highlighted_frame):
+    """Takes a snapshot copy of the frame and launches report_anomaly on a
+    daemon thread, so the main loop can continue immediately."""
+    frame_copy = highlighted_frame.copy()
+    timestamp = time.strftime("%Y-%m-%d_%H-%M-%S")
+    thread = threading.Thread(
+        target=report_anomaly,
+        args=(overall_tier, frame_copy, timestamp),
+        daemon=True
+    )
+    thread.start()
+
+
+def handle_anomaly_reporting(overall_tier, highlighted_frame):
+    """The state machine described earlier:
+    - No anomaly -> reset the reporting state (timer reset).
+    - Anomaly, not currently reporting -> send immediately, start the cooldown.
+    - Anomaly, already reporting -> send again only once the wait has elapsed.
+    This runs independently of the persistence filter; it only looks at the
+    final overall_tier for the frame."""
+    now = getTimeSeconds()
+
+    if overall_tier == "NORMAL":
+        gb.reporting_active = False
+        return
+
+    if not gb.reporting_active:
+        _dispatch_report(overall_tier, highlighted_frame)
+        gb.reporting_active = True
+        gb.last_report_time = now
+    else:
+        if now - gb.last_report_time >= gb.anomaly_report_wait:
+            _dispatch_report(overall_tier, highlighted_frame)
+            gb.last_report_time = now
