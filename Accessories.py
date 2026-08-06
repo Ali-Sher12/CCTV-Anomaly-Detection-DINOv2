@@ -56,6 +56,8 @@ def get_patch_embeddings(frame):
     return patch_embeddings.numpy()
 
 
+#############   NN Mode Calibration    #############
+
 def finalize_calibration(calibration_store):
     return np.stack(calibration_store, axis=0)  # shape: (num_calib_frames, num_patches, embedding_dim)
 
@@ -68,17 +70,95 @@ def compute_patch_scores(new_embeddings, calibration_array):
     return patch_scores, nearest_slot_per_patch
 
 
-def compute_tier(score_grid, zone_grid_high_priority):
+def self_fix_calibration(calibration_array, new_embeddings, nearest_slot_per_patch, frame_eligible):
+    if not frame_eligible:
+        return
+    patch_indices = np.arange(new_embeddings.shape[0])
+    calibration_array[nearest_slot_per_patch, patch_indices, :] = new_embeddings
+
+
+#############   Mahalanobis Mode Calibration    #############
+
+def compute_patch_scores_mahalanobis(new_embeddings, calibration_mean, calibration_precision):
+    """
+    new_embeddings:       (num_patches, embedding_dim)
+    calibration_mean:     (num_patches, embedding_dim)
+    calibration_precision:(num_patches, embedding_dim, embedding_dim) -- inverse covariance per patch
+    Returns patch_scores: (num_patches,) -- Mahalanobis distance per patch
+    """
+    diffs = new_embeddings - calibration_mean  # (num_patches, embedding_dim)
+
+    # For each patch p, compute diffs[p] @ precision[p] @ diffs[p] (a scalar per patch)
+    temp = np.einsum('pi,pij->pj', diffs, calibration_precision)
+    squared_distances = np.einsum('pj,pj->p', temp, diffs)
+
+    # Guard against tiny negative values from floating point rounding before sqrt
+    squared_distances = np.maximum(squared_distances, 0)
+    return np.sqrt(squared_distances)
+
+
+def finalize_calibration_mahalanobis(calibration_store):
+    """
+    calibration_store: list of length totalCalibrationFrames, each shape (num_patches, embedding_dim)
+    Returns: (mean, precision)
+        mean:      (num_patches, embedding_dim)
+        precision: (num_patches, embedding_dim, embedding_dim) -- inverse of the regularized covariance
+    """
+    stacked = np.stack(calibration_store, axis=0)  # (num_frames, num_patches, embedding_dim)
+    num_frames, num_patches, embedding_dim = stacked.shape
+
+    mean = np.mean(stacked, axis=0)  # (num_patches, embedding_dim)
+
+    precision = np.zeros((num_patches, embedding_dim, embedding_dim), dtype=np.float64)
+    identity = np.eye(embedding_dim)
+
+    print(f"[Mahalanobis Calibration] Computing covariance + inverse for {num_patches} patches "
+          f"({embedding_dim} dims each, {num_frames} samples) -- this may take a little while...")
+
+    for p in range(num_patches):
+        patch_samples = stacked[:, p, :]  # (num_frames, embedding_dim)
+        covariance = np.cov(patch_samples, rowvar=False)  # (embedding_dim, embedding_dim)
+        covariance_regularized = covariance + gb.MAHALANOBIS_EPSILON * identity
+        precision[p] = np.linalg.inv(covariance_regularized)
+
+    # Diagnostic: score the calibration frames against their own mean/precision so you
+    # can see what a "typical normal" score looks like, and tune TIER_THRESHOLDS_MAHALANOBIS
+    # in Globals.py accordingly.
+    all_scores = np.stack([
+        compute_patch_scores_mahalanobis(stacked[i], mean, precision) for i in range(num_frames)
+    ])
+    print(f"[Mahalanobis Calibration] typical normal score -- "
+          f"mean: {all_scores.mean():.2f}, std: {all_scores.std():.2f}, max: {all_scores.max():.2f}")
+    print("Use these numbers as a starting point to tune TIER_THRESHOLDS_MAHALANOBIS in Globals.py")
+
+    return mean, precision
+
+
+def self_fix_calibration_mahalanobis(calibration_mean, new_embeddings, frame_eligible, alpha):
+    """
+    Updates the running mean only, in place, via an exponential moving average.
+    The covariance/precision matrices stay fixed after initial calibration --
+    updating them online would require re-inverting a large matrix per patch every
+    accepted frame, which is too expensive for real-time video.
+    """
+    if not frame_eligible:
+        return
+    calibration_mean += alpha * (new_embeddings - calibration_mean)
+
+
+#############   Shared Tiering / Persistence / Eligibility    #############
+
+def compute_tier(score_grid, zone_grid_high_priority, thresholds, thresholds_high_priority):
     tier_grid = np.full(score_grid.shape, "NORMAL", dtype=object)
 
     is_high_priority = zone_grid_high_priority == 1
     is_normal_zone = ~is_high_priority
 
-    tier_grid[is_normal_zone & (score_grid >= gb.TIER_THRESHOLDS["ALERT"])] = "ALERT"
-    tier_grid[is_normal_zone & (score_grid >= gb.TIER_THRESHOLDS["CRITICAL"])] = "CRITICAL"
+    tier_grid[is_normal_zone & (score_grid >= thresholds["ALERT"])] = "ALERT"
+    tier_grid[is_normal_zone & (score_grid >= thresholds["CRITICAL"])] = "CRITICAL"
 
-    tier_grid[is_high_priority & (score_grid >= gb.TIER_THRESHOLDS_HIGH_PRIORITY["ALERT"])] = "ALERT"
-    tier_grid[is_high_priority & (score_grid >= gb.TIER_THRESHOLDS_HIGH_PRIORITY["CRITICAL"])] = "CRITICAL"
+    tier_grid[is_high_priority & (score_grid >= thresholds_high_priority["ALERT"])] = "ALERT"
+    tier_grid[is_high_priority & (score_grid >= thresholds_high_priority["CRITICAL"])] = "CRITICAL"
 
     return tier_grid
 
@@ -105,13 +185,6 @@ def is_frame_eligible(raw_tier_grid, zone_grid_high_priority, allowed_error):
 
     medium_priority_alert_count = np.sum(is_medium_priority & (flat_tier == "ALERT"))
     return medium_priority_alert_count <= allowed_error
-
-
-def self_fix_calibration(calibration_array, new_embeddings, nearest_slot_per_patch, frame_eligible):
-    if not frame_eligible:
-        return
-    patch_indices = np.arange(new_embeddings.shape[0])
-    calibration_array[nearest_slot_per_patch, patch_indices, :] = new_embeddings
 
 
 def draw_overlay(frame, current_highlight, alpha=0.45):
@@ -203,8 +276,9 @@ def report_anomaly(overall_tier, frame, timestamp):
     body = f"An anomaly of tier '{overall_tier}' was detected at {timestamp}."
 
     if is_internet_available():
-        send_email(subject, body, frame)
-        log_anomaly_locally(subject, body, frame, timestamp)
+        success = send_email(subject, body, frame)
+        if not success:
+            log_anomaly_locally(subject, body, frame, timestamp)
     else:
         log_anomaly_locally(subject, body, frame, timestamp)
 
@@ -223,7 +297,7 @@ def _dispatch_report(overall_tier, highlighted_frame):
 
 
 def handle_anomaly_reporting(overall_tier, highlighted_frame):
-    """The state machine described earlier:
+    """State machine:
     - No anomaly -> reset the reporting state (timer reset).
     - Anomaly, not currently reporting -> send immediately, start the cooldown.
     - Anomaly, already reporting -> send again only once the wait has elapsed.
