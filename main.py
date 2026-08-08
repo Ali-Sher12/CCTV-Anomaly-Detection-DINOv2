@@ -3,12 +3,20 @@ import numpy as np
 import tkinter as tk
 import Accessories as Acc
 import Globals as gb
+import pygame
 from gui import AnomalyDetectionGUI
 
 def main():
 
     Acc.Model_Setup()
-
+    pygame.mixer.init()
+    aud_alert = pygame.mixer.Sound("Assets/Audio/alert.wav")    
+    aud_critical = pygame.mixer.Sound("Assets/Audio/critical.wav")
+    channel_alert = aud_alert.play(loops=-1)
+    channel_alert.stop()
+    channel_crit = aud_critical.play(loops=-1)
+    channel_crit.stop()
+    
     persistence_counters = None
     cap = None
     zone_grid_high_priority = None
@@ -16,7 +24,7 @@ def main():
 
     ############# Tkinter Setup #############
     root = tk.Tk()
-    gui = AnomalyDetectionGUI(root)
+    gb.gui = AnomalyDetectionGUI(root)
     #########################################
 
     def setup_camera():
@@ -53,25 +61,25 @@ def main():
         zone_grid_high_priority = cv2.resize(high_priority_mask,(gb.grid_w, gb.grid_h),interpolation=cv2.INTER_NEAREST)
         ############################################
 
-        gui.log("Camera initialized. Starting calibration...")
+        gb.gui.log("Camera initialized. Starting calibration...")
 
     setup_camera()
 
     def update_loop():
-        nonlocal persistence_counters
+        nonlocal persistence_counters,channel_alert,channel_crit
 
-        if not gui.is_running():
+        if not gb.gui.is_running():
             return
 
         # Check if GUI requested a restart (Apply & Restart was clicked)
-        if gui.restart_requested:
-            gui.clear_restart_flag()
+        if gb.gui.restart_requested:
+            gb.gui.clear_restart_flag()
             setup_camera()
             root.after(50, update_loop)
             return
 
         if cap is None or not cap.isOpened():
-            gui.log("Camera not available. Retrying...")
+            gb.gui.log("Camera not available. Retrying...")
             root.after(1000, update_loop)
             return
 
@@ -81,7 +89,7 @@ def main():
                 root.after(10, update_loop)
                 return
             else:
-                gui.log("End of video stream.")
+                gb.gui.log("End of video stream.")
                 return
 
         ##########     frame processing     ##########
@@ -94,15 +102,15 @@ def main():
             embeddings = Acc.get_patch_embeddings(final_frame)
             if gb.initialCalibration:
                 gb.calibration_store.append(embeddings)
-                gb.calibration_frames.append(final_frame)
+#                gb.calibration_frames.append(final_frame)
                 gb.currentCalibrationFramesHeld += 1
                 if gb.currentCalibrationFramesHeld < gb.totalCalibrationFrames:
                     gb.initialCalibration = True
-                    gui.log(f"Calibration: {gb.currentCalibrationFramesHeld+1} / {gb.totalCalibrationFrames}")
+                    gb.gui.log(f"Calibration: {gb.currentCalibrationFramesHeld+1} / {gb.totalCalibrationFrames}")
                 else:
                     gb.initialCalibration = False
                     gb.calibration_array = Acc.finalize_calibration(gb.calibration_store)
-                    gui.log("Calibration complete.")
+                    gb.gui.log("Calibration complete.")
 
             else:
                 patch_scores, nearest_slot_per_patch = Acc.compute_patch_scores(embeddings, gb.calibration_array)
@@ -118,17 +126,33 @@ def main():
                 if gb.auto_update_calibration:
                     Acc.self_fix_calibration(gb.calibration_array, embeddings, nearest_slot_per_patch, frame_eligible)
 
+                if overall_tier == "ALERT":
+                    if channel_crit != None and channel_crit.get_busy():
+                        channel_crit.stop()
+                    if not (channel_alert != None and channel_alert.get_busy()):
+                        channel_alert = aud_alert.play(loops=-1)
+
+                elif overall_tier == "CRITICAL" and not channel_crit.get_busy():                    
+                    if channel_alert != None and channel_alert.get_busy():
+                        channel_alert.stop()
+                    if not (channel_crit != None and channel_crit.get_busy()):
+                        channel_crit = aud_critical.play(loops=-1)
+                else:
+                    if channel_alert != None and channel_alert.get_busy():
+                        channel_alert.stop()
+                    if channel_crit != None and channel_crit.get_busy():
+                        channel_crit.stop()                       
+
                 ##### Anomaly Reporting #####
                 highlighted_frame = Acc.draw_overlay(frame, gb.current_highlight)
                 Acc.handle_anomaly_reporting(overall_tier, highlighted_frame)
                 ##############################
 
-                gui.update_status(overall_tier, overall_tier)
+                gb.gui.update_status(overall_tier, overall_tier)
 
         processed_frame = Acc.draw_overlay(frame, gb.current_highlight)
         ##############################################
-
-        gui.update_frame(processed_frame)
+        gb.gui.update_frame(processed_frame)
 
         # Schedule the next frame; delay controls responsiveness
         root.after(gb.delay, update_loop)
@@ -137,7 +161,7 @@ def main():
     root.after(100, update_loop)
 
     # Bind ESC to close
-    root.bind("<Escape>", lambda e: gui.on_closing())
+    root.bind("<Escape>", lambda e: gb.gui.on_closing())
 
     root.mainloop()
 

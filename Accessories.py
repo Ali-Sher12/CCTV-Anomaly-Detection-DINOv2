@@ -147,19 +147,16 @@ def draw_overlay(frame, current_highlight, alpha=0.45):
 #############   Anomaly Reporting    #############
 
 def is_internet_available(host="8.8.8.8", port=53, timeout=3):
-    """Quick connectivity check. Tries to open a socket to Google's DNS.
-    Fails fast (within `timeout` seconds) instead of letting smtplib hang."""
     try:
         socket.setdefaulttimeout(timeout)
         socket.socket(socket.AF_INET, socket.SOCK_STREAM).connect((host, port))
         return True
     except OSError:
+        gb.gui.log("Email send failed. No internet.")        
         return False
 
 
 def send_email(subject, body, frame):
-    """Builds and sends an email with the highlighted frame attached as a jpg.
-    Returns True on success, False on any failure (so the caller can fall back to logging)."""
     try:
         msg = MIMEMultipart()
         msg["From"] = gb.EMAIL_SENDER
@@ -176,15 +173,14 @@ def send_email(subject, body, frame):
             server.starttls()
             server.login(gb.EMAIL_SENDER, gb.EMAIL_PASSWORD)
             server.send_message(msg)
+        gb.gui.log("Anomaly successfully reported at : " + gb.EMAIL_RECEIVER)
         return True
     except Exception as e:
-        print("Email send failed:", e)
+        gb.gui.log("Email send failed.")
         return False
 
 
 def log_anomaly_locally(subject, body, frame, timestamp):
-    """Fallback used when there's no internet. Appends a line to a text log
-    and saves the highlighted frame as a jpg, both inside gb.LOG_DIR."""
     os.makedirs(gb.LOG_DIR, exist_ok=True)
 
     log_path = os.path.join(gb.LOG_DIR, "anomaly_log.txt")
@@ -196,9 +192,6 @@ def log_anomaly_locally(subject, body, frame, timestamp):
 
 
 def report_anomaly(overall_tier, frame, timestamp):
-    """Runs on a background thread. Decides email vs local log, and executes it.
-    This function itself is blocking, but since it runs in its own thread,
-    the main video loop never waits on it."""
     subject = f"Anomaly Detected: {overall_tier}"
     body = f"An anomaly of tier '{overall_tier}' was detected at {timestamp}."
 
@@ -210,8 +203,6 @@ def report_anomaly(overall_tier, frame, timestamp):
 
 
 def _dispatch_report(overall_tier, highlighted_frame):
-    """Takes a snapshot copy of the frame and launches report_anomaly on a
-    daemon thread, so the main loop can continue immediately."""
     frame_copy = highlighted_frame.copy()
     timestamp = time.strftime("%Y-%m-%d_%H-%M-%S")
     thread = threading.Thread(
@@ -223,12 +214,6 @@ def _dispatch_report(overall_tier, highlighted_frame):
 
 
 def handle_anomaly_reporting(overall_tier, highlighted_frame):
-    """The state machine described earlier:
-    - No anomaly -> reset the reporting state (timer reset).
-    - Anomaly, not currently reporting -> send immediately, start the cooldown.
-    - Anomaly, already reporting -> send again only once the wait has elapsed.
-    This runs independently of the persistence filter; it only looks at the
-    final overall_tier for the frame."""
     now = getTimeSeconds()
 
     if overall_tier == "NORMAL":

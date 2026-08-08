@@ -1,8 +1,8 @@
 #########   Globals- can be toggled at runtime    #########
 secondsForOneFrame = 0.5
-delay = 1
+delay = 3
 REQUIRED_PERSISTENCE = 1
-allowed_error = 5
+allowed_error = 1
 anomaly_report_wait = 15
 TIER_THRESHOLDS = {
     "ALERT":    59,
@@ -56,3 +56,5 @@ grid_w = 0
 initialCalibration = True
 currentCalibrationFramesHeld = 0
 ################################
+
+gui = None
