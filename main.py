@@ -97,12 +97,12 @@ def main():
         Ignored_zone_done_mask = frame.copy()
         Ignored_zone_done_mask[new_mask == 0] = 0
         final_frame = cv2.cvtColor(Ignored_zone_done_mask, cv2.COLOR_BGR2RGB)
+        final_frame = cv2.resize(final_frame,(224,224),interpolation=cv2.INTER_AREA)
 
         if Acc.FrameEligiblebyTime(gb.secondsForOneFrame):
             embeddings = Acc.get_patch_embeddings(final_frame)
             if gb.initialCalibration:
                 gb.calibration_store.append(embeddings)
-#                gb.calibration_frames.append(final_frame)
                 gb.currentCalibrationFramesHeld += 1
                 if gb.currentCalibrationFramesHeld < gb.totalCalibrationFrames:
                     gb.initialCalibration = True

@@ -21,6 +21,9 @@ class AnomalyDetectionGUI:
         self._staged_video_stream = gb.doVideoStream
         self._staged_calib_frames = gb.totalCalibrationFrames
         self._staged_url = "http://192.168.18.98:8080/video"
+        self._staged_email = gb.EMAIL_RECEIVER
+        #ad size here
+
         self._mask_modified = False
 
         # Fonts
@@ -165,6 +168,15 @@ class AnomalyDetectionGUI:
         self.entry_calib.pack(side=tk.LEFT, padx=5)
         self.entry_calib.bind("<KeyRelease>", self._on_calib_frames_staged)
 
+        # Email Receiver entry
+        email_row = tk.Frame(grp, bg='#c0c0c0')
+        email_row.pack(fill=tk.X, pady=3)
+        tk.Label(email_row, text="Email Receiver:", bg='#c0c0c0',
+                font=self.font_classic).pack(side=tk.LEFT)
+        self.entry_email = tk.Entry(email_row, width=18, font=self.font_classic)
+        self.entry_email.pack(side=tk.LEFT, padx=5)
+        self.entry_email.bind("<KeyRelease>", self._on_email_staged)
+
         # Modify Mask button
         tk.Button(grp, text="Modify Mask...", command=self._open_mask_editor,
                   relief=tk.RAISED, bd=2, bg='#c0c0c0',
@@ -212,14 +224,18 @@ class AnomalyDetectionGUI:
         self.scale_hp_crit.set(gb.TIER_THRESHOLDS_HIGH_PRIORITY["CRITICAL"])
 
         # Restart-required controls — set to current *active* values
+# Restart-required controls — set to current *active* values
         self._staged_video_stream = gb.doVideoStream
         self._staged_calib_frames = gb.totalCalibrationFrames
+        self._staged_email = gb.EMAIL_RECEIVER
         self._mask_modified = False
 
         self.var_video.set(gb.doVideoStream)
         self._toggle_url_visibility()
         self.entry_calib.delete(0, tk.END)
         self.entry_calib.insert(0, str(gb.totalCalibrationFrames))
+        self.entry_email.delete(0, tk.END)
+        self.entry_email.insert(0, gb.EMAIL_RECEIVER)
 
     # ─── Runtime slider callbacks (write immediately) ─────────────
 
@@ -275,6 +291,11 @@ class AnomalyDetectionGUI:
         self._staged_url = self.entry_url.get().strip()
         self._check_restart_needed()
 
+    def _on_email_staged(self, event=None):
+        """Entry is GUI-only. Does NOT touch gb.EMAIL_RECEIVER."""
+        self._staged_email = self.entry_email.get().strip()
+        self._check_restart_needed()
+
     def _on_calib_frames_staged(self, event=None):
         """Entry is GUI-only. Does NOT touch gb.totalCalibrationFrames."""
         try:
@@ -301,6 +322,7 @@ class AnomalyDetectionGUI:
         needs_restart = (
             self._staged_video_stream != gb.doVideoStream or
             self._staged_calib_frames != gb.totalCalibrationFrames or
+            self._staged_email != gb.EMAIL_RECEIVER or
             self._mask_modified
         )
         if needs_restart:
@@ -316,6 +338,7 @@ class AnomalyDetectionGUI:
         # Commit staged values
         gb.doVideoStream = self._staged_video_stream
         gb.totalCalibrationFrames = self._staged_calib_frames
+        gb.EMAIL_RECEIVER = self._staged_email
         if gb.doVideoStream and self._staged_url:
             gb.url = self._staged_url
 

@@ -49,7 +49,7 @@ def Model_Setup():
 
 
 def get_patch_embeddings(frame):
-    inputs = gb.processor(images=frame, return_tensors="pt")
+    inputs = gb.processor(images=frame, return_tensors="pt",do_resize=False, do_center_crop=False)
     with torch.no_grad():
         outputs = gb.model(**inputs, interpolate_pos_encoding=True)
     patch_embeddings = outputs.last_hidden_state[0, 1:, :]
@@ -104,7 +104,7 @@ def is_frame_eligible(raw_tier_grid, zone_grid_high_priority, allowed_error):
         return False
 
     medium_priority_alert_count = np.sum(is_medium_priority & (flat_tier == "ALERT"))
-    return medium_priority_alert_count <= allowed_error
+    return medium_priority_alert_count < allowed_error
 
 
 def self_fix_calibration(calibration_array, new_embeddings, nearest_slot_per_patch, frame_eligible):

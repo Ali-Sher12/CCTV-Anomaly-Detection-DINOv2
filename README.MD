@@ -1,4 +1,4 @@
-This project is currently in its infance, more features will be added over time.
+This project is currently in its infancy, more features will be added over time.
 
 ## CCTV Anomaly Detector
 

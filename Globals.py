@@ -12,7 +12,7 @@ TIER_THRESHOLDS_HIGH_PRIORITY = {
     "ALERT":    45,
     "CRITICAL": 50,
 }
-auto_update_calibration = True
+auto_update_calibration = False
 ####################################
 
 ##### Globals - thse can be toggled but effects take place on restart. (load/writing to file) #####
