@@ -15,7 +15,7 @@ if %errorlevel% neq 0 (
     if !errorlevel! neq 0 (
         echo [*] Downloading Python installer manually...
         powershell -Command "Invoke-WebRequest -Uri 'https://www.python.org/ftp/python/3.14.0/python-3.14.0-amd64.exe' -OutFile '%TEMP%\python_installer.exe'"
-        echo [*] Running Python installer silently (adding to PATH)...
+        echo [*] Running Python installer silently...
         "%TEMP%\python_installer.exe" /quiet InstallAllUsers=1 PrependPath=1 Include_pip=1
         del "%TEMP%\python_installer.exe"
     )
@@ -32,26 +32,7 @@ python -m pip install --upgrade pip
 
 echo.
 echo [*] Installing exact library versions from local system...
-python -m pip install ^
-    torch==2.13.0 ^
-    torchvision==0.28.0 ^
-    transformers==5.14.1 ^
-    numpy==2.5.1 ^
-    opencv-python==5.0.0.93 ^
-    pillow==12.3.0 ^
-    pygame-ce==2.5.7 ^
-    scipy==1.18.0 ^
-    huggingface_hub==1.25.1 ^
-    safetensors==0.8.0 ^
-    tqdm==4.69.1 ^
-    PyYAML==6.0.3 ^
-    certifi==2026.6.17 ^
-    filelock==3.29.0 ^
-    fsspec==2026.4.0 ^
-    packaging==26.2 ^
-    regex==2026.7.19 ^
-    idna==3.18 ^
-    typing_extensions==4.16.0
+python -m pip install torch==2.13.0 torchvision==0.28.0 transformers==5.14.1 numpy==2.5.1 opencv-python==5.0.0.93 pillow==12.3.0 pygame-ce==2.5.7 scipy==1.18.0 huggingface_hub==1.25.1 safetensors==0.8.0 tqdm==4.69.1 PyYAML==6.0.3 certifi==2026.6.17 filelock==3.29.0 fsspec==2026.4.0 packaging==26.2 regex==2026.7.19 idna==3.18 typing_extensions==4.16.0
 
 if %errorlevel% equ 0 (
     echo.
