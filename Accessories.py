@@ -139,6 +139,8 @@ def draw_overlay(frame, current_highlight, alpha=0.45):
     result[mask_full == 1] = blended_full[mask_full == 1]
 
     label_color = gb.TIER_COLORS.get(overall_tier, (255, 255, 255))
+    if overall_tier == "CRITICAL":
+        overall_tier = "ANOMALY"
     cv2.putText(result, overall_tier, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, label_color, 2)
 
     return result

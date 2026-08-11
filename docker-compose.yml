@@ -1,0 +1,12 @@
+services:
+  cctv-anomaly-detection:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: cctv_anomaly_detection
+    environment:
+      - DISPLAY=${DISPLAY:-:0}
+    volumes:
+      - /tmp/.X11-unix:/tmp/.X11-unix:rw
+      - ./logs:/app/logs
+    network_mode: host

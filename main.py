@@ -36,7 +36,7 @@ def main():
 
         ############# Video Capture Setup #############
         if gb.doVideoStream:
-            gb.url = "http://192.168.18.98:8080/video"
+            gb.url = "http://10.13.12.117:8080/video"
         else:
             gb.url = 0
 

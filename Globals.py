@@ -1,23 +1,23 @@
 #########   Globals- can be toggled at runtime    #########
-secondsForOneFrame = 0.5
+secondsForOneFrame = 0.2
 delay = 3
 REQUIRED_PERSISTENCE = 1
 allowed_error = 1
 anomaly_report_wait = 15
 TIER_THRESHOLDS = {
-    "ALERT":    59,
-    "CRITICAL": 60,
-}
-TIER_THRESHOLDS_HIGH_PRIORITY = {
     "ALERT":    45,
     "CRITICAL": 50,
+}
+TIER_THRESHOLDS_HIGH_PRIORITY = {
+    "ALERT":    35,
+    "CRITICAL": 40,
 }
 auto_update_calibration = False
 ####################################
 
 ##### Globals - thse can be toggled but effects take place on restart. (load/writing to file) #####
-totalCalibrationFrames = 20
-doVideoStream = False
+totalCalibrationFrames = 50
+doVideoStream = True
 url = 0
 EMAIL_SENDER = "woejack42699@gmail.com"
 EMAIL_PASSWORD = "rtir pwts riht sdjt"      # use an app password, not your real password
