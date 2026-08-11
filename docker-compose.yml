@@ -6,6 +6,7 @@ services:
     container_name: cctv_anomaly_detection
     environment:
       - DISPLAY=${DISPLAY:-:0}
+      - SDL_AUDIODRIVER=dummy
     volumes:
       - /tmp/.X11-unix:/tmp/.X11-unix:rw
       - ./logs:/app/logs

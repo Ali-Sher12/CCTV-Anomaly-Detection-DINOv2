@@ -1,10 +1,12 @@
 # Use official Python 3.14 slim image
 FROM python:3.14-slim
 
-# Prevent Python from writing .pyc files and enable unbuffered logging output
+# Prevent Python from writing .pyc files, enable unbuffered output,
+# and use dummy SDL audio driver so pygame.mixer.init() succeeds inside Docker without requiring a physical sound card
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    DISPLAY=:0
+    DISPLAY=:0 \
+    SDL_AUDIODRIVER=dummy
 
 # Install Linux system dependencies required for OpenCV, Tkinter (GUI), Pygame sound, and PyTorch
 RUN apt-get update && apt-get install -y --no-install-recommends \
