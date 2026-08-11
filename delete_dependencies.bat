@@ -4,7 +4,9 @@ echo     Uninstalling Project Dependencies
 echo ===================================================
 echo.
 
-where python >nul 2>nul
+:: Same real-check as the installer: "python --version" fails
+:: on the Store-stub python.exe, whereas "where python" would not.
+python --version >nul 2>nul
 if %errorlevel% neq 0 (
     echo [!] Python is not installed or not found in PATH.
     pause
