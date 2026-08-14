@@ -385,10 +385,10 @@ class AnomalyDetectionGUI:
         else:
             self.lbl_calibration.config(text="Calibration: Complete")
 
-    def update_status(self, status_text, tier="NORMAL"):
+    def update_status(self, status_text):
         self.lbl_status.config(text=f"Status: {status_text}")
         color_map = {"NORMAL": "green", "ALERT": "orange", "CRITICAL": "red"}
-        self.lbl_status.config(fg=color_map.get(tier, "green"))
+        self.lbl_status.config(fg=color_map.get(status_text, "green"))
 
     def log(self, message):
         ts = time.strftime("%H:%M:%S")

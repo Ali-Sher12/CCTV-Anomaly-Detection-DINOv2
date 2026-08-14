@@ -17,8 +17,10 @@ auto_update_calibration = False
 
 ##### Globals - thse can be toggled but effects take place on restart. (load/writing to file) #####
 totalCalibrationFrames = 50
-doVideoStream = True
+doVideoStream = False
 url = 0
+DINO_ONLY = True #Hybrid if false
+
 EMAIL_SENDER = "woejack42699@gmail.com"
 EMAIL_PASSWORD = "rtir pwts riht sdjt"      # use an app password, not your real password
 EMAIL_RECEIVER = "muhammad.ali.sher.official@gmail.com"
@@ -34,7 +36,7 @@ TIER_COLORS = {
 }
 severity_order = ["NORMAL", "ALERT", "CRITICAL"]
 embeddings = None
-persistence_counters = None
+
 current_highlight = None
 calibration_store = []
 medium_priority_region = (0, 255, 0)
@@ -46,15 +48,12 @@ frame_scores = []
 calibration_array = None
 reporting_active = False
 last_report_time = 0
-processor = None
-model = None
-grid_h = 0
-grid_w = 0
+
 ##############################
 
 ##### Single use variables - dont change these #####
 initialCalibration = True
 currentCalibrationFramesHeld = 0
 ################################
-
 gui = None
+
