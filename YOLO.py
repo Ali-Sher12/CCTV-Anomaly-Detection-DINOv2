@@ -22,7 +22,7 @@ class YOLO_MODEL:
             cv2.rectangle(final_frame, (x1, y1), (x2, y2), dark_yellow, 2)
             label = f"{feat_list[0]} {feat_list[1]:.2f}"
             if feat_list[6] != -1:
-                label = f"{feat_list[0]} {feat_list[1]:.2f} {feat_list[6]:.2f}"
+                label = f"{feat_list[0]}  {feat_list[1]*100:.1f}%  id:{feat_list[6]}"
             cv2.putText(final_frame, label, (x1, y1 - 8), cv2.FONT_HERSHEY_SIMPLEX, 0.5, dark_yellow, 2)
         return final_frame
 

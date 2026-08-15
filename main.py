@@ -4,12 +4,14 @@ import Accessories as Acc
 import Globals as gb
 from gui import AnomalyDetectionGUI
 from DINO import DINO_MODEL as dino
+from audio import AudioEngine as speak
 
 def main():
 
     dino_model = dino()
     cap = None
     Acc.getnSetSpecs()
+    Audio = speak()
     ############# Tkinter Setup #############
     root = tk.Tk()
     gb.gui = AnomalyDetectionGUI(root)
@@ -42,7 +44,7 @@ def main():
     setup_camera()
 
     def update_loop():
-        nonlocal dino_model,cap
+        nonlocal dino_model,cap,Audio
 
         if not gb.gui.is_running():
             return
@@ -73,6 +75,7 @@ def main():
 
         dino_model.getFrame(frame)
         processed_frame,overall_tier = dino_model.DINO_computation_loop()
+        Audio.say(overall_tier)
         gb.gui.update_status(overall_tier)        
         gb.gui.update_frame(processed_frame)
         ##############################################

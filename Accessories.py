@@ -1,6 +1,5 @@
 import time
 import psutil
-import platform
 import Globals as gb
 import torch
 
