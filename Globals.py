@@ -19,7 +19,7 @@ auto_update_calibration = False
 totalCalibrationFrames = 50
 doVideoStream = False
 url = 0
-DINO_ONLY = True #Hybrid if false
+DINO_ONLY = False #Hybrid if false
 
 EMAIL_SENDER = "woejack42699@gmail.com"
 EMAIL_PASSWORD = "rtir pwts riht sdjt"      # use an app password, not your real password
@@ -27,6 +27,10 @@ EMAIL_RECEIVER = "muhammad.ali.sher.official@gmail.com"
 SMTP_SERVER = "smtp.gmail.com"
 SMTP_PORT = 587
 LOG_DIR = "logs"                  # folder where offline anomaly logs/images get saved
+
+useGPU = False
+DINO_MODEL_VERSION = "facebook/dinov2-small"
+YOLO_MODEL_VERSION = "Models/YOLO/yolo26s.pt"
 ####################################
 
 ##### Don't change these #####

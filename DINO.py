@@ -12,12 +12,26 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.mime.image import MIMEImage
 from transformers import AutoImageProcessor, AutoModel
+from YOLO import YOLO_MODEL as yolo
 
 class DINO_MODEL:
 
     def __init__(self):
-        self.processor = AutoImageProcessor.from_pretrained("facebook/dinov2-small",cache_dir="Models",local_files_only=True)
-        self.model = AutoModel.from_pretrained("facebook/dinov2-small",cache_dir="Models",local_files_only=True)
+        self.processor = None
+        self.model = None
+        if gb.DINO_MODEL_VERSION == "facebook/dinov2-small":
+            self.processor = AutoImageProcessor.from_pretrained(gb.DINO_MODEL_VERSION,cache_dir="Models/DINO",local_files_only=True)
+            self.model = AutoModel.from_pretrained(gb.DINO_MODEL_VERSION,cache_dir="Models/DINO",local_files_only=True)
+
+        else:
+            self.processor = AutoImageProcessor.from_pretrained(gb.DINO_MODEL_VERSION,local_files_only=True)
+            self.model = AutoModel.from_pretrained(gb.DINO_MODEL_VERSION,local_files_only=True)
+
+        self.device = "cpu"
+        if gb.useGPU == True:
+            if torch.cuda.is_available():
+                self.device = "cuda"
+        self.model = self.model.to(self.device)        
         self.model.eval()
         self._input_size = self.processor.crop_size["height"]
         self._patch_size = self.model.config.patch_size
@@ -33,16 +47,20 @@ class DINO_MODEL:
         self.high_priority_mask = None
         self.highlighted_frame = None
         self.overall_tier = "NORMAL"
+        self.yolo_model = None
+        if gb.DINO_ONLY is False:
+            self.yolo_model = yolo()
 
     def getFrame(self,f):
         self.frame = f.copy()
 
     def _get_patch_embeddings(self,final_frame):
         inputs = self.processor(images=final_frame, return_tensors="pt",do_resize=False, do_center_crop=False)
+        inputs = {k: v.to(self.device) for k, v in inputs.items()}
         with torch.no_grad():
             outputs = self.model(**inputs, interpolate_pos_encoding=True)
         patch_embeddings = outputs.last_hidden_state[0, 1:, :]
-        return patch_embeddings.numpy()
+        return patch_embeddings.cpu().numpy()
 
     def _finalize_calibration(self):
         return np.stack(gb.calibration_store, axis=0)  # shape: (num_calib_frames, num_patches, embedding_dim)
@@ -96,7 +114,7 @@ class DINO_MODEL:
     def draw_overlay(self):
         alpha=0.45
         if gb.current_highlight is None:
-            return self.frame.copy()
+            return self.frame
 
         tier_grid, overall_tier = gb.current_highlight
         self.grid_h, self.grid_w = tier_grid.shape
@@ -231,7 +249,7 @@ class DINO_MODEL:
         final_frame = cv2.cvtColor(Ignored_zone_done_mask, cv2.COLOR_BGR2RGB)
         final_frame = cv2.resize(final_frame,(224,224),interpolation=cv2.INTER_AREA)
 
-        if Acc.FrameEligiblebyTime(gb.secondsForOneFrame):
+        if Acc.FrameEligiblebyTime():
             embeddings = self._get_patch_embeddings(final_frame)
             if gb.initialCalibration:
                 gb.calibration_store.append(embeddings)
@@ -259,9 +277,17 @@ class DINO_MODEL:
                 if gb.auto_update_calibration:
                     self.self_fix_calibration(gb.calibration_array, embeddings, nearest_slot_per_patch, frame_eligible)
 
+                if gb.DINO_ONLY is False:
+                    self.yolo_model.run_model(self.frame)
                 ##### Anomaly Reporting #####
                 self.highlighted_frame = self.draw_overlay()
+                if gb.DINO_ONLY is False:
+                    self.highlighted_frame = self.yolo_model.draw_overlay(self.highlighted_frame)
                 self.handle_anomaly_reporting()
                 return self.highlighted_frame,self.overall_tier
                 ##############################
-        return self.draw_overlay(),self.overall_tier
+        self.highlighted_frame = self.draw_overlay()
+        if gb.DINO_ONLY is False:
+            self.highlighted_frame = self.yolo_model.draw_overlay(self.highlighted_frame)
+        return self.highlighted_frame,self.overall_tier
+        

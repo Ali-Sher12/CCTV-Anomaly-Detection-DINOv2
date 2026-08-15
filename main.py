@@ -4,15 +4,16 @@ import Accessories as Acc
 import Globals as gb
 from gui import AnomalyDetectionGUI
 from DINO import DINO_MODEL as dino
-#from YOLO import YOLO_MODEL as yolo
 
 def main():
 
     dino_model = dino()
     cap = None
+    Acc.getnSetSpecs()
     ############# Tkinter Setup #############
     root = tk.Tk()
     gb.gui = AnomalyDetectionGUI(root)
+    Acc.printSpecs()
     #########################################
 
     def setup_camera():
@@ -72,10 +73,9 @@ def main():
 
         dino_model.getFrame(frame)
         processed_frame,overall_tier = dino_model.DINO_computation_loop()
-        gb.gui.update_status(overall_tier)
-        
-        ##############################################
+        gb.gui.update_status(overall_tier)        
         gb.gui.update_frame(processed_frame)
+        ##############################################
 
         # Schedule the next frame; delay controls responsiveness
         root.after(gb.delay, update_loop)
