@@ -48,8 +48,7 @@ class DINO_MODEL:
         self.highlighted_frame = None
         self.overall_tier = "NORMAL"
         self.yolo_model = None
-        if gb.DINO_ONLY is False:
-            self.yolo_model = yolo()
+        self.yolo_model = yolo()
 
     def getFrame(self,f):
         self.frame = f.copy()

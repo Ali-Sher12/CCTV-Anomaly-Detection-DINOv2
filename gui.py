@@ -1,15 +1,22 @@
 import tkinter as tk
 import time
+import os
 import Globals as gb
 from PIL import Image, ImageTk
 from mask_editor import MaskEditor
+from settings_store import load_settings, save_settings
 import cv2
+
+
+# ─── Load persisted settings into Globals on import ──────────────
+_saved = load_settings() or {}
+_SAVED_STREAM_URL = _saved.get("stream_url", "http://192.168.18.98:8080/video")
 
 
 class AnomalyDetectionGUI:
     def __init__(self, root):
         self.root = root
-        self.root.title("CCTV Anomaly Detection System")
+        self.root.title("Passive Anomaly Detector PLUS +")
         self.root.configure(bg='#c0c0c0')
         self.root.resizable(False, False)
 
@@ -20,10 +27,8 @@ class AnomalyDetectionGUI:
         # Staged restart values — GUI-only until "Apply & Restart" is clicked
         self._staged_video_stream = gb.doVideoStream
         self._staged_calib_frames = gb.totalCalibrationFrames
-        self._staged_url = "http://192.168.18.98:8080/video"
-        self._staged_email = gb.EMAIL_RECEIVER
-        #ad size here
-
+        self._staged_url = _SAVED_STREAM_URL
+        self._staged_dino_only = gb.DINO_ONLY
         self._mask_modified = False
 
         # Fonts
@@ -36,13 +41,40 @@ class AnomalyDetectionGUI:
         self._build_ui()
         self._init_controls()
 
+        # Set window icon if logo exists
+        self._set_app_icon()
+
+    def _set_app_icon(self):
+        """Set the window icon from Assets/logo.png."""
+        logo_path = "Assets/logo.png"
+        if os.path.exists(logo_path):
+            try:
+                self._icon_img = ImageTk.PhotoImage(file=logo_path)
+                self.root.iconphoto(False, self._icon_img)
+            except Exception:
+                pass
+
     # ─── UI Construction ──────────────────────────────────────────
 
     def _build_ui(self):
-        # Top banner (navy blue accent)
-        banner = tk.Label(self.root, text="\U0001f3a5 CCTV Anomaly Detection System",
-                          bg='#000080', fg='white', font=self.font_title, anchor='w', padx=10)
-        banner.pack(fill=tk.X, pady=(0, 5))
+        # Top banner (navy blue accent) with optional icon
+        banner_frame = tk.Frame(self.root, bg='#000080')
+        banner_frame.pack(fill=tk.X, pady=(0, 5))
+
+        logo_path = "Assets/logo.png"
+        self._banner_icon = None
+        if os.path.exists(logo_path):
+            try:
+                b_img = Image.open(logo_path)
+                b_img.thumbnail((24, 24), Image.Resampling.LANCZOS)
+                self._banner_icon = ImageTk.PhotoImage(b_img)
+                tk.Label(banner_frame, image=self._banner_icon, bg='#000080').pack(side=tk.LEFT, padx=(8, 2), pady=2)
+            except Exception:
+                pass
+
+        banner = tk.Label(banner_frame, text="Passive Anomaly Detector PLUS +",
+                          bg='#000080', fg='white', font=self.font_title, anchor='w')
+        banner.pack(side=tk.LEFT, padx=(2, 10), pady=3)
 
         # Main layout
         main_frame = tk.Frame(self.root, bg='#c0c0c0')
@@ -142,6 +174,14 @@ class AnomalyDetectionGUI:
                             font=self.font_classic, relief=tk.GROOVE, bd=2)
         grp.pack(fill=tk.X, ipadx=5, ipady=3)
 
+        # DINO Only checkbox
+        self.var_dino_only = tk.BooleanVar()
+        self.chk_dino_only = tk.Checkbutton(grp, text="DINO Only (no Hybrid)",
+                                            variable=self.var_dino_only,
+                                            bg='#c0c0c0', font=self.font_classic,
+                                            command=self._on_dino_only_staged)
+        self.chk_dino_only.pack(anchor='w')
+
         # Video Stream checkbox
         self.var_video = tk.BooleanVar()
         self.chk_video = tk.Checkbutton(grp, text="Video Stream", variable=self.var_video,
@@ -168,14 +208,10 @@ class AnomalyDetectionGUI:
         self.entry_calib.pack(side=tk.LEFT, padx=5)
         self.entry_calib.bind("<KeyRelease>", self._on_calib_frames_staged)
 
-        # Email Receiver entry
-        email_row = tk.Frame(grp, bg='#c0c0c0')
-        email_row.pack(fill=tk.X, pady=3)
-        tk.Label(email_row, text="Email Receiver:", bg='#c0c0c0',
-                font=self.font_classic).pack(side=tk.LEFT)
-        self.entry_email = tk.Entry(email_row, width=18, font=self.font_classic)
-        self.entry_email.pack(side=tk.LEFT, padx=5)
-        self.entry_email.bind("<KeyRelease>", self._on_email_staged)
+        # Email Settings button — opens a separate window
+        tk.Button(grp, text="Email Settings...", command=self._open_email_settings,
+                  relief=tk.RAISED, bd=2, bg='#c0c0c0',
+                  font=self.font_classic).pack(pady=3, fill=tk.X)
 
         # Modify Mask button
         tk.Button(grp, text="Modify Mask...", command=self._open_mask_editor,
@@ -224,18 +260,16 @@ class AnomalyDetectionGUI:
         self.scale_hp_crit.set(gb.TIER_THRESHOLDS_HIGH_PRIORITY["CRITICAL"])
 
         # Restart-required controls — set to current *active* values
-# Restart-required controls — set to current *active* values
         self._staged_video_stream = gb.doVideoStream
         self._staged_calib_frames = gb.totalCalibrationFrames
-        self._staged_email = gb.EMAIL_RECEIVER
+        self._staged_dino_only = gb.DINO_ONLY
         self._mask_modified = False
 
         self.var_video.set(gb.doVideoStream)
+        self.var_dino_only.set(gb.DINO_ONLY)
         self._toggle_url_visibility()
         self.entry_calib.delete(0, tk.END)
         self.entry_calib.insert(0, str(gb.totalCalibrationFrames))
-        self.entry_email.delete(0, tk.END)
-        self.entry_email.insert(0, gb.EMAIL_RECEIVER)
 
     # ─── Runtime slider callbacks (write immediately) ─────────────
 
@@ -273,6 +307,11 @@ class AnomalyDetectionGUI:
 
     # ─── Restart-required staged callbacks (GUI-only) ─────────────
 
+    def _on_dino_only_staged(self):
+        """Toggle is GUI-only. Does NOT touch gb.DINO_ONLY."""
+        self._staged_dino_only = self.var_dino_only.get()
+        self._check_restart_needed()
+
     def _on_video_staged(self):
         """Toggle is GUI-only. Does NOT touch gb.doVideoStream."""
         self._staged_video_stream = self.var_video.get()
@@ -289,11 +328,6 @@ class AnomalyDetectionGUI:
     def _on_url_staged(self, event=None):
         """Entry is GUI-only. Does NOT touch gb.url."""
         self._staged_url = self.entry_url.get().strip()
-        self._check_restart_needed()
-
-    def _on_email_staged(self, event=None):
-        """Entry is GUI-only. Does NOT touch gb.EMAIL_RECEIVER."""
-        self._staged_email = self.entry_email.get().strip()
         self._check_restart_needed()
 
     def _on_calib_frames_staged(self, event=None):
@@ -317,12 +351,90 @@ class AnomalyDetectionGUI:
         self._check_restart_needed()
         self.log("Mask saved. Click 'Apply & Restart' to load new mask.")
 
+    # ─── Email Settings Window ────────────────────────────────────
+
+    def _open_email_settings(self):
+        """Opens a separate Toplevel window to edit email sender, receiver, and password."""
+        win = tk.Toplevel(self.root)
+        win.title("Email Settings")
+        win.configure(bg='#c0c0c0')
+        win.resizable(False, False)
+        win.grab_set()  # modal
+
+        font = self.font_classic
+        font_bold = self.font_restart_hint
+
+        # Banner
+        tk.Label(win, text="Email Configuration", bg='#000080', fg='white',
+                 font=font_bold, anchor='w', padx=8).pack(fill=tk.X)
+
+        body = tk.LabelFrame(win, text="SMTP Settings", bg='#c0c0c0',
+                             font=font, relief=tk.GROOVE, bd=2)
+        body.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+
+        # Sender
+        row1 = tk.Frame(body, bg='#c0c0c0')
+        row1.pack(fill=tk.X, pady=3, padx=5)
+        tk.Label(row1, text="Sender Email:", bg='#c0c0c0', font=font, width=15,
+                 anchor='w').pack(side=tk.LEFT)
+        entry_sender = tk.Entry(row1, width=30, font=font)
+        entry_sender.pack(side=tk.LEFT, padx=3)
+        entry_sender.insert(0, gb.EMAIL_SENDER)
+
+        # Password
+        row2 = tk.Frame(body, bg='#c0c0c0')
+        row2.pack(fill=tk.X, pady=3, padx=5)
+        tk.Label(row2, text="App Password:", bg='#c0c0c0', font=font, width=15,
+                 anchor='w').pack(side=tk.LEFT)
+        entry_password = tk.Entry(row2, width=30, font=font, show="*")
+        entry_password.pack(side=tk.LEFT, padx=3)
+        entry_password.insert(0, gb.EMAIL_PASSWORD)
+
+        # Receiver
+        row3 = tk.Frame(body, bg='#c0c0c0')
+        row3.pack(fill=tk.X, pady=3, padx=5)
+        tk.Label(row3, text="Receiver Email:", bg='#c0c0c0', font=font, width=15,
+                 anchor='w').pack(side=tk.LEFT)
+        entry_receiver = tk.Entry(row3, width=30, font=font)
+        entry_receiver.pack(side=tk.LEFT, padx=3)
+        entry_receiver.insert(0, gb.EMAIL_RECEIVER)
+
+        # Note
+        tk.Label(body, text="Changes are saved immediately.",
+                 bg='#c0c0c0', fg='#006400', font=font_bold).pack(pady=(5, 0))
+
+        # Status label for feedback
+        lbl_email_status = tk.Label(body, text="", bg='#c0c0c0', font=font)
+        lbl_email_status.pack(pady=2)
+
+        # Buttons
+        btn_frame = tk.Frame(body, bg='#c0c0c0')
+        btn_frame.pack(fill=tk.X, padx=5, pady=5)
+
+        def save_email():
+            gb.EMAIL_SENDER = entry_sender.get().strip()
+            gb.EMAIL_PASSWORD = entry_password.get().strip()
+            gb.EMAIL_RECEIVER = entry_receiver.get().strip()
+            save_settings(stream_url=self._staged_url)
+            lbl_email_status.config(text="Saved.", fg='#006400')
+            self.log(f"Email settings updated.")
+            win.after(800, win.destroy)
+
+        tk.Button(btn_frame, text="Save", command=save_email,
+                  relief=tk.RAISED, bd=2, bg='#c0c0c0', font=font,
+                  width=10).pack(side=tk.LEFT, padx=5)
+        tk.Button(btn_frame, text="Cancel", command=win.destroy,
+                  relief=tk.RAISED, bd=2, bg='#c0c0c0', font=font,
+                  width=10).pack(side=tk.LEFT, padx=5)
+
+    # ─── Restart logic ────────────────────────────────────────────
+
     def _check_restart_needed(self):
         """Show/hide the 'Restart required' hint and enable/disable the button."""
         needs_restart = (
             self._staged_video_stream != gb.doVideoStream or
             self._staged_calib_frames != gb.totalCalibrationFrames or
-            self._staged_email != gb.EMAIL_RECEIVER or
+            self._staged_dino_only != gb.DINO_ONLY or
             self._mask_modified
         )
         if needs_restart:
@@ -338,7 +450,7 @@ class AnomalyDetectionGUI:
         # Commit staged values
         gb.doVideoStream = self._staged_video_stream
         gb.totalCalibrationFrames = self._staged_calib_frames
-        gb.EMAIL_RECEIVER = self._staged_email
+        gb.DINO_ONLY = self._staged_dino_only
         if gb.doVideoStream and self._staged_url:
             gb.url = self._staged_url
 
@@ -349,6 +461,9 @@ class AnomalyDetectionGUI:
         gb.calibration_frames = []
         gb.calibration_array = None
         gb.current_highlight = None
+
+        # Save all settings to file
+        save_settings(stream_url=self._staged_url)
 
         # Signal main.py to re-open camera / reload mask
         self._restart_requested = True
@@ -403,5 +518,7 @@ class AnomalyDetectionGUI:
         return self._running
 
     def on_closing(self):
+        # Save all current settings before exit
+        save_settings(stream_url=self._staged_url)
         self._running = False
         self.root.destroy()

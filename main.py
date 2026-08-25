@@ -5,21 +5,30 @@ import Globals as gb
 from gui import AnomalyDetectionGUI
 from DINO import DINO_MODEL as dino
 from audio import AudioEngine as speak
+from loading_screen import LoadingScreen
 
 def main():
+    ############# Root & Loading Screen #############
+    root = tk.Tk()
+    root.withdraw()  # hide main window until fully loaded
 
+    loading = LoadingScreen(root)
+
+    loading.set_status("Loading DINO & YOLO AI models...")
     dino_model = dino()
     cap = None
+
+    loading.set_status("Checking hardware specs & audio...")
     Acc.getnSetSpecs()
     Audio = speak()
-    ############# Tkinter Setup #############
-    root = tk.Tk()
+
+    loading.set_status("Initializing user interface...")
     gb.gui = AnomalyDetectionGUI(root)
     Acc.printSpecs()
-    #########################################
+    #################################################
 
     def setup_camera():
-        nonlocal dino_model,cap
+        nonlocal dino_model, cap
 
         # Release previous capture if re-opening
         if cap is not None:
@@ -27,7 +36,8 @@ def main():
 
         ############# Video Capture Setup #############
         if gb.doVideoStream:
-            gb.url = "http://10.13.12.117:8080/video"
+            if not gb.url or gb.url == 0:
+                gb.url = "http://192.168.18.98:8080/video"
         else:
             gb.url = 0
 
@@ -41,10 +51,15 @@ def main():
 
         gb.gui.log("Camera initialized. Starting calibration...")
 
+    loading.set_status("Connecting to video source...")
     setup_camera()
 
+    # Close loading splash and show main window
+    loading.close()
+    root.deiconify()
+
     def update_loop():
-        nonlocal dino_model,cap,Audio
+        nonlocal dino_model, cap, Audio
 
         if not gb.gui.is_running():
             return
@@ -74,7 +89,7 @@ def main():
         frame = cv2.flip(frame, 1)
 
         dino_model.getFrame(frame)
-        processed_frame,overall_tier = dino_model.DINO_computation_loop()
+        processed_frame, overall_tier = dino_model.DINO_computation_loop()
         Audio.say(overall_tier)
         gb.gui.update_status(overall_tier)        
         gb.gui.update_frame(processed_frame)

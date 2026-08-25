@@ -1,0 +1,19 @@
+{
+  "secondsForOneFrame": 1.0,
+  "delay": 3,
+  "REQUIRED_PERSISTENCE": 1,
+  "allowed_error": 1,
+  "anomaly_report_wait": 10,
+  "auto_update_calibration": false,
+  "TIER_THRESHOLDS_ALERT": 45.0,
+  "TIER_THRESHOLDS_CRITICAL": 50.0,
+  "TIER_THRESHOLDS_HIGH_PRIORITY_ALERT": 35.0,
+  "TIER_THRESHOLDS_HIGH_PRIORITY_CRITICAL": 40.0,
+  "totalCalibrationFrames": 100,
+  "doVideoStream": false,
+  "DINO_ONLY": true,
+  "stream_url": "http://test-url:8080",
+  "EMAIL_SENDER": "woejack42699@gmail.com",
+  "EMAIL_PASSWORD": "rtir pwts riht sdjt",
+  "EMAIL_RECEIVER": "sans42699@gmail.com"
+}
