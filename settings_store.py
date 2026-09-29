@@ -56,6 +56,7 @@ def default_settings() -> dict:
         "dino_only": False,
         "total_calibration_frames": 100,
         "inter_camera_delay": 0.5,
+        "audio_muted": False,
         "email": {
             "sender": "",
             "app_password": "",

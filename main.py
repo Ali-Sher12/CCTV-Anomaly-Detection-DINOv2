@@ -65,6 +65,7 @@ def main():
     gb.TIER_THRESHOLDS["CRITICAL"]               = dt.get("CRITICAL", 50.0)
     gb.TIER_THRESHOLDS_HIGH_PRIORITY["ALERT"]    = dt.get("HIGH_PRIORITY_ALERT",    35.0)
     gb.TIER_THRESHOLDS_HIGH_PRIORITY["CRITICAL"] = dt.get("HIGH_PRIORITY_CRITICAL", 40.0)
+    gb.audio_muted = bool(data.get("audio_muted", False))
 
     email_cfg = data.get("email", {})
     if email_cfg.get("sender"):

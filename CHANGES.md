@@ -150,3 +150,39 @@
 5. **Scheduler & Live Video**:
    - Change "Inter-Camera Delay" slider from 0.5s to 2.0s.
    - Expected: Detection pacing updates live from next slot; video display never stutters or freezes.
+
+---
+
+## 8. Cross-Platform Audio & Watchdog Scheduled Task (WD-INST-01 & OS-Agnostic Audio)
+
+### Windows Scheduled Task Installation (WD-INST-01)
+To supervise `watchdog.py` at Windows startup whether a user is logged on or not, run PowerShell / Command Prompt as Administrator:
+
+```batch
+REM Register Watchdog as an elevated Windows Scheduled Task running on system startup
+schtasks /Create /TN "PassiveAnomalyDetectorWatchdog" ^
+  /TR "python \"%~dp0watchdog.py\"" ^
+  /SC ONSTART /DELAY 0001:00 /RU SYSTEM /RL HIGHEST ^
+  /F
+```
+
+To configure task failure recovery in Windows Task Scheduler (`taskschd.msc`):
+- Action on failure: Restart every 1 minute up to 3 times.
+
+To uninstall:
+```batch
+schtasks /Delete /TN "PassiveAnomalyDetectorWatchdog" /F
+```
+
+### Multi-Tier OS-Agnostic Audio System
+- **Windows**: Uses native Microsoft SAPI5 via `pyttsx3`.
+- **Linux**: Seamless fallback pipeline:
+  1. `pyttsx3` with system `espeak`/`espeak-ng`.
+  2. CLI binaries (`espeak-ng`, `espeak`, `spd-say`).
+  3. Online Google TTS stream played through available system players (`pw-play`, `paplay`, `ffplay`, `aplay`).
+  4. Synthesized sine wave audio beep generated in-memory.
+  5. Terminal bell (`\a`).
+- **Mute / Unmute**:
+  - Live toggle via GUI checkbox "Mute Audio Alerts" under Runtime Controls.
+  - Persisted in `Assets/settings.json` (`"audio_muted": true/false`).
+  - Hot-applies instantly to speech queue and watchdog alert dispatcher.

@@ -20,6 +20,10 @@ import shutil
 import smtplib
 import subprocess
 import datetime
+import tempfile
+import urllib.request
+import urllib.parse
+import wave
 from pathlib import Path
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -173,8 +177,55 @@ def append_watchdog_log(log_path: Path, message: str, current_time: float | None
         print(f"[Watchdog] Warning: could not write log file: {e}")
 
 
+def _play_watchdog_audio(filepath: str) -> bool:
+    for player in ("pw-play", "paplay", "ffplay", "aplay"):
+        if shutil.which(player):
+            cmd = [player, filepath]
+            if player == "ffplay":
+                cmd = ["ffplay", "-nodisp", "-autoexit", "-loglevel", "quiet", filepath]
+            try:
+                res = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=8)
+                if res.returncode == 0:
+                    return True
+            except Exception:
+                pass
+    return False
+
+
+def _play_watchdog_beep(duration_sec: float = 0.4, freq_hz: float = 880.0) -> bool:
+    sr = 22050
+    num_samples = int(sr * duration_sec)
+    import math
+    import struct
+    waveform = bytearray()
+    for i in range(num_samples):
+        val = int(32767.0 * math.sin(2.0 * math.pi * freq_hz * (i / sr)))
+        # clamp
+        val = max(-32768, min(32767, val))
+        waveform.extend(struct.pack("<h", val))
+
+    temp_wav = None
+    try:
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
+            temp_wav = f.name
+        with wave.open(temp_wav, "wb") as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)
+            wf.setframerate(sr)
+            wf.writeframes(bytes(waveform))
+        return _play_watchdog_audio(temp_wav)
+    except Exception:
+        return False
+    finally:
+        if temp_wav and os.path.exists(temp_wav):
+            try:
+                os.remove(temp_wav)
+            except Exception:
+                pass
+
+
 def speak_alert(text: str) -> bool:
-    """Speak text using pyttsx3 or CLI speech fallback (WD-05, WD-07)."""
+    """Speak text using pyttsx3, CLI speech, online TTS, or synthesized audio (WD-05, WD-07)."""
     if pyttsx3 is not None:
         try:
             engine = pyttsx3.init()
@@ -194,9 +245,37 @@ def speak_alert(text: str) -> bool:
             except Exception:
                 pass
 
+    # Online TTS fallback
+    try:
+        url = ("https://translate.google.com/translate_tts?ie=UTF-8&tl=en&client=tw-ob&q="
+               + urllib.parse.quote(text))
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=3) as resp:
+            data = resp.read()
+        temp_mp3 = None
+        try:
+            with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as f:
+                temp_mp3 = f.name
+                f.write(data)
+            if _play_watchdog_audio(temp_mp3):
+                return True
+        finally:
+            if temp_mp3 and os.path.exists(temp_mp3):
+                try:
+                    os.remove(temp_mp3)
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
+    # Synthesized audio beep fallback
+    if _play_watchdog_beep():
+        return True
+
     # Audible terminal bell
     print("\a", end="", flush=True)
     return False
+
 
 
 def send_watchdog_email(email_cfg: dict | None, subject: str, body: str) -> bool:

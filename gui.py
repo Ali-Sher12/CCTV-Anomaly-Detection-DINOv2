@@ -36,6 +36,7 @@ class AnomalyDetectionGUI:
         self.root.title("Passive Anomaly Detector PLUS +")
         self.root.configure(bg="#c0c0c0")
         self.root.resizable(True, True)
+        self.root.minsize(900, 600)
 
         self._running = True
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
@@ -48,6 +49,7 @@ class AnomalyDetectionGUI:
         # Per-camera UI widgets
         self._canvases: dict[int, tk.Canvas] = {}
         self._photos: dict[int, ImageTk.PhotoImage] = {}
+        self._image_ids: dict[int, int] = {}
         self._status_labels: dict[int, tk.Label] = {}
         self._calib_labels: dict[int, tk.Label] = {}
         self._calib_panels: dict[int, tk.Frame] = {}
@@ -145,7 +147,13 @@ class AnomalyDetectionGUI:
         def _on_frame_configure(event):
             scroll_canvas.configure(scrollregion=scroll_canvas.bbox("all"))
 
+        def _on_canvas_configure(event):
+            # Keep inner frame matched with viewport width
+            if event.width > 10:
+                scroll_canvas.itemconfig(grid_window, width=event.width)
+
         grid_frame.bind("<Configure>", _on_frame_configure)
+        scroll_canvas.bind("<Configure>", _on_canvas_configure)
 
         # Cross-platform mousewheel scrolling
         def _on_mousewheel(event):
@@ -165,6 +173,9 @@ class AnomalyDetectionGUI:
 
         _bind_mousewheel(scroll_canvas)
         _bind_mousewheel(grid_frame)
+
+        grid_frame.grid_columnconfigure(0, weight=1, uniform="cam_col")
+        grid_frame.grid_columnconfigure(1, weight=1, uniform="cam_col")
 
         cfgs = self._cameras_cfg if self._cameras_cfg else [{"id": 1, "name": "Camera 1"}]
 
@@ -279,6 +290,13 @@ class AnomalyDetectionGUI:
                        font=self.font_classic,
                        command=self._on_auto_update).pack(anchor="w", pady=(4, 0))
 
+        # Mute audio checkbutton
+        self.var_mute_audio = tk.BooleanVar(value=gb.audio_muted)
+        tk.Checkbutton(grp, text="Mute Audio Alerts",
+                       variable=self.var_mute_audio, bg="#c0c0c0",
+                       font=self.font_classic,
+                       command=self._on_mute_audio).pack(anchor="w", pady=(2, 0))
+
     def _build_threshold_group(self, parent):
         grp = tk.LabelFrame(parent, text="Global Thresholds", bg="#c0c0c0",
                             font=self.font_classic, relief=tk.GROOVE, bd=2)
@@ -346,6 +364,13 @@ class AnomalyDetectionGUI:
 
     def _on_auto_update(self):
         gb.auto_update_calibration = self.var_auto_update.get()
+
+    def _on_mute_audio(self):
+        muted = self.var_mute_audio.get()
+        gb.audio_muted = muted
+        self._settings_data["audio_muted"] = muted
+        save_settings(self._settings_data)
+        self.log(f"Audio alerts {'MUTED' if muted else 'UNMUTED'}.")
 
     def _on_alert(self, val):
         val = float(val)
@@ -616,11 +641,16 @@ class AnomalyDetectionGUI:
         if canvas is None or frame is None:
             return
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        rgb = cv2.resize(rgb, (CANVAS_W, CANVAS_H))
+        rgb = cv2.resize(rgb, (CANVAS_W, CANVAS_H), interpolation=cv2.INTER_LINEAR)
         img = Image.fromarray(rgb)
         photo = ImageTk.PhotoImage(image=img)
         self._photos[camera_id] = photo
-        canvas.create_image(0, 0, image=photo, anchor=tk.NW)
+
+        img_id = self._image_ids.get(camera_id)
+        if img_id is None:
+            self._image_ids[camera_id] = canvas.create_image(0, 0, image=photo, anchor=tk.NW)
+        else:
+            canvas.itemconfigure(img_id, image=photo)
 
     def update_camera_status(self, camera_id: int, status_text: str):
         lbl = self._status_labels.get(camera_id)

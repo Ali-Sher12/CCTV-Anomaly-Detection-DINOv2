@@ -6,6 +6,7 @@
   "dino_only": true,
   "total_calibration_frames": 60,
   "inter_camera_delay": 0.1,
+  "audio_muted": false,
   "email": {
     "sender": "",
     "app_password": "",

@@ -5,6 +5,7 @@ delay = 3
 allowed_error = 1
 anomaly_report_wait = 15
 auto_update_calibration = False
+audio_muted = False
 
 TIER_THRESHOLDS = {
     "ALERT": 45.0,
