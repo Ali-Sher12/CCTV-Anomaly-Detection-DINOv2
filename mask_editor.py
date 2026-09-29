@@ -56,8 +56,11 @@ class MaskEditor:
         self.win = tk.Toplevel(parent)
         self.win.title("Mask Editor — Zone Painter")
         self.win.configure(bg='#c0c0c0')
-        self.win.resizable(False, False)
-        self.win.grab_set()      # modal
+        self.win.transient(parent)
+        try:
+            self.win.grab_set()      # modal
+        except tk.TclError:
+            pass
 
         font = ('MS Sans Serif', 8)
         font_bold = ('MS Sans Serif', 9, 'bold')

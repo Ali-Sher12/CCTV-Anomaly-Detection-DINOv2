@@ -1,19 +1,49 @@
 {
-  "secondsForOneFrame": 1.0,
-  "delay": 3,
-  "REQUIRED_PERSISTENCE": 1,
-  "allowed_error": 1,
-  "anomaly_report_wait": 10,
-  "auto_update_calibration": false,
-  "TIER_THRESHOLDS_ALERT": 45.0,
-  "TIER_THRESHOLDS_CRITICAL": 50.0,
-  "TIER_THRESHOLDS_HIGH_PRIORITY_ALERT": 35.0,
-  "TIER_THRESHOLDS_HIGH_PRIORITY_CRITICAL": 40.0,
-  "totalCalibrationFrames": 100,
-  "doVideoStream": false,
-  "DINO_ONLY": true,
-  "stream_url": "http://test-url:8080",
-  "EMAIL_SENDER": "woejack42699@gmail.com",
-  "EMAIL_PASSWORD": "rtir pwts riht sdjt",
-  "EMAIL_RECEIVER": "sans42699@gmail.com"
+  "setup_complete": true,
+  "device_tier": "LOW",
+  "dino_model_version": "facebook/dinov2-small",
+  "yolo_model_version": "Models/YOLO/yolo26s.pt",
+  "dino_only": true,
+  "total_calibration_frames": 60,
+  "inter_camera_delay": 0.1,
+  "email": {
+    "sender": "",
+    "app_password": "",
+    "receivers": []
+  },
+  "default_thresholds": {
+    "ALERT": 45.0,
+    "CRITICAL": 50.0,
+    "HIGH_PRIORITY_ALERT": 35.0,
+    "HIGH_PRIORITY_CRITICAL": 40.0
+  },
+  "cameras": [
+    {
+      "id": 1,
+      "name": "Camera 1",
+      "source": 0,
+      "mask_path": "Assets/masks/camera_1_mask.png",
+      "thresholds": null,
+      "allowed_error": 1,
+      "anomaly_report_wait": 10
+    },
+    {
+      "id": 2,
+      "name": "Camera 2",
+      "source": 0,
+      "mask_path": "Assets/masks/camera_2_mask.png",
+      "thresholds": null,
+      "allowed_error": 1,
+      "anomaly_report_wait": 10
+    },
+    {
+      "id": 3,
+      "name": "Camera 3",
+      "source": "http://192.168.18.98:8080/video",
+      "mask_path": "Assets/masks/camera_3_mask.png",
+      "thresholds": null,
+      "allowed_error": 1,
+      "anomaly_report_wait": 10
+    }
+  ]
 }

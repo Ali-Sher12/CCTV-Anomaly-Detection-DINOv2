@@ -1,52 +1,79 @@
-import tkinter as tk
-import time
+"""gui.py — Multi-camera Tkinter UI.
+
+Features:
+- N camera canvases in a 2-column grid.
+- Docked non-modal calibration panels per camera with 4 buttons (Start, Pause, Confirm, Restart).
+- Live-editable "Inter-Camera Delay (s)" slider saved on release.
+- Right-click per-camera settings with threshold overrides, mask editor, and calibration actions.
+- Complete removal of persistence UI and legacy banners.
+"""
+
 import os
-import Globals as gb
+import sys
+import time
+import tkinter as tk
+from tkinter import ttk, messagebox, simpledialog
 from PIL import Image, ImageTk
-from mask_editor import MaskEditor
-from settings_store import load_settings, save_settings
 import cv2
+import numpy as np
 
+import Globals as gb
+from mask_editor import MaskEditor
+from settings_store import save_settings
+from calibration_session import SessionState, CalibrationSession
 
-# ─── Load persisted settings into Globals on import ──────────────
-_saved = load_settings() or {}
-_SAVED_STREAM_URL = _saved.get("stream_url", "http://192.168.18.98:8080/video")
+CANVAS_W = 480
+CANVAS_H = 360
+COLS = 2
 
 
 class AnomalyDetectionGUI:
-    def __init__(self, root):
+
+    def __init__(self, root, cameras: list | None = None, settings_data: dict | None = None):
         self.root = root
         self.root.title("Passive Anomaly Detector PLUS +")
-        self.root.configure(bg='#c0c0c0')
-        self.root.resizable(False, False)
+        self.root.configure(bg="#c0c0c0")
+        self.root.resizable(True, True)
 
         self._running = True
-        self._restart_requested = False
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
 
-        # Staged restart values — GUI-only until "Apply & Restart" is clicked
-        self._staged_video_stream = gb.doVideoStream
-        self._staged_calib_frames = gb.totalCalibrationFrames
-        self._staged_url = _SAVED_STREAM_URL
-        self._staged_dino_only = gb.DINO_ONLY
-        self._mask_modified = False
+        self._settings_data = settings_data or {}
+        self._cameras_cfg = cameras or []
+        self._feeds = {}
+        self._feed_manager = None
+
+        # Per-camera UI widgets
+        self._canvases: dict[int, tk.Canvas] = {}
+        self._photos: dict[int, ImageTk.PhotoImage] = {}
+        self._status_labels: dict[int, tk.Label] = {}
+        self._calib_labels: dict[int, tk.Label] = {}
+        self._calib_panels: dict[int, tk.Frame] = {}
+        self._calib_progress: dict[int, ttk.Progressbar] = {}
+        self._calib_btns: dict[int, dict[str, tk.Button]] = {}
+        self._calib_count_labels: dict[int, tk.Label] = {}
 
         # Fonts
-        self.font_classic = ('MS Sans Serif', 8)
-        self.font_title = ('MS Sans Serif', 10, 'bold')
-        self.font_status = ('Fixedsys', 10)
-        self.font_restart_hint = ('MS Sans Serif', 8, 'bold')
+        self.font_classic = ("MS Sans Serif", 8)
+        self.font_bold = ("MS Sans Serif", 8, "bold")
+        self.font_title = ("MS Sans Serif", 9, "bold")
+        self.font_status = ("Fixedsys", 10)
 
-        # Build UI
         self._build_ui()
         self._init_controls()
-
-        # Set window icon if logo exists
         self._set_app_icon()
 
+    def set_feed_manager(self, feed_manager):
+        self._feed_manager = feed_manager
+
+    def set_feeds(self, feeds):
+        self._feeds = {feed.id: feed for feed in feeds}
+
+    def _get_feed(self, camera_id: int):
+        return self._feeds.get(camera_id)
+
     def _set_app_icon(self):
-        """Set the window icon from Assets/logo.png."""
-        logo_path = "Assets/logo.png"
+        logo_path = os.path.join("Assets", "logo.png")
         if os.path.exists(logo_path):
             try:
                 self._icon_img = ImageTk.PhotoImage(file=logo_path)
@@ -54,471 +81,605 @@ class AnomalyDetectionGUI:
             except Exception:
                 pass
 
-    # ─── UI Construction ──────────────────────────────────────────
+    # ------------------------------------------------------------------
+    # UI Building
+    # ------------------------------------------------------------------
 
     def _build_ui(self):
-        # Top banner (navy blue accent) with optional icon
-        banner_frame = tk.Frame(self.root, bg='#000080')
+        # Top banner
+        banner_frame = tk.Frame(self.root, bg="#000080")
         banner_frame.pack(fill=tk.X, pady=(0, 5))
 
-        logo_path = "Assets/logo.png"
+        logo_path = os.path.join("Assets", "logo.png")
         self._banner_icon = None
         if os.path.exists(logo_path):
             try:
                 b_img = Image.open(logo_path)
                 b_img.thumbnail((24, 24), Image.Resampling.LANCZOS)
                 self._banner_icon = ImageTk.PhotoImage(b_img)
-                tk.Label(banner_frame, image=self._banner_icon, bg='#000080').pack(side=tk.LEFT, padx=(8, 2), pady=2)
+                tk.Label(banner_frame, image=self._banner_icon,
+                         bg="#000080").pack(side=tk.LEFT, padx=(8, 2), pady=2)
             except Exception:
                 pass
 
-        banner = tk.Label(banner_frame, text="Passive Anomaly Detector PLUS +",
-                          bg='#000080', fg='white', font=self.font_title, anchor='w')
-        banner.pack(side=tk.LEFT, padx=(2, 10), pady=3)
+        tk.Label(banner_frame, text="Passive Anomaly Detector PLUS +",
+                 bg="#000080", fg="white", font=self.font_title,
+                 anchor="w").pack(side=tk.LEFT, padx=(2, 10), pady=3)
 
         # Main layout
-        main_frame = tk.Frame(self.root, bg='#c0c0c0')
+        main_frame = tk.Frame(self.root, bg="#c0c0c0")
         main_frame.pack(fill=tk.BOTH, expand=True, padx=5, pady=5)
 
-        # Left Panel — Camera Feed + Terminal
-        left_panel = tk.Frame(main_frame, bg='#c0c0c0')
+        # Left panel (cameras)
+        left_panel = tk.Frame(main_frame, bg="#c0c0c0")
         left_panel.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=(0, 5))
+        self._build_camera_grid(left_panel)
 
-        feed_frame = tk.Frame(left_panel, bg='#c0c0c0', relief=tk.SUNKEN, bd=2)
-        feed_frame.pack(fill=tk.X, padx=0, pady=(0, 4))
-
-        self.canvas = tk.Canvas(feed_frame, width=640, height=480, bg='black', highlightthickness=0)
-        self.canvas.pack(padx=5, pady=5)
-
-        # Terminal log area below the camera feed
-        term_frame = tk.LabelFrame(left_panel, text="Log", bg='#c0c0c0',
-                                   font=self.font_classic, relief=tk.GROOVE, bd=2)
-        term_frame.pack(fill=tk.BOTH, expand=True)
-
-        self.terminal = tk.Text(term_frame, height=6, bg='black', fg='#00ff00',
-                                font=('Courier New', 9), state=tk.DISABLED,
-                                wrap=tk.WORD, bd=0, highlightthickness=0)
-        term_scroll = tk.Scrollbar(term_frame, command=self.terminal.yview)
-        self.terminal.config(yscrollcommand=term_scroll.set)
-        term_scroll.pack(side=tk.RIGHT, fill=tk.Y)
-        self.terminal.pack(side=tk.LEFT, fill=tk.BOTH, expand=True, padx=2, pady=2)
-
-        # Right Panel — Controls
-        right_panel = tk.Frame(main_frame, bg='#c0c0c0')
+        # Right panel (controls)
+        right_panel = tk.Frame(main_frame, bg="#c0c0c0")
         right_panel.pack(side=tk.RIGHT, fill=tk.Y, padx=(5, 0))
 
-        self._build_status_group(right_panel)
         self._build_runtime_group(right_panel)
         self._build_threshold_group(right_panel)
-        self._build_restart_group(right_panel)
+        self._build_system_group(right_panel)
 
-        # Status Bar
-        self.statusbar = tk.Label(self.root, text="\u25b8 Ready", bd=1, relief=tk.SUNKEN,
-                                  anchor='w', bg='#c0c0c0', font=self.font_status)
+        # Bottom status bar
+        self.statusbar = tk.Label(self.root, text="▸ Ready", bd=1, relief=tk.SUNKEN,
+                                  anchor="w", bg="#c0c0c0", font=self.font_status)
         self.statusbar.pack(side=tk.BOTTOM, fill=tk.X)
 
-        self.photo = None
+    def _build_camera_grid(self, parent):
+        # Scrollable container for camera grid
+        scroll_canvas = tk.Canvas(parent, bg="#c0c0c0", highlightthickness=0)
+        scrollbar = ttk.Scrollbar(parent, orient="vertical", command=scroll_canvas.yview)
+        scroll_canvas.configure(yscrollcommand=scrollbar.set)
 
-    def _build_status_group(self, parent):
-        grp = tk.LabelFrame(parent, text="System Status", bg='#c0c0c0',
-                            font=self.font_classic, relief=tk.GROOVE, bd=2)
-        grp.pack(fill=tk.X, pady=(0, 8), ipadx=5, ipady=3)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        scroll_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
-        self.lbl_status = tk.Label(grp, text="Status: NORMAL", bg='#c0c0c0',
-                                   font=self.font_title, fg='green')
-        self.lbl_status.pack(anchor='w')
+        grid_frame = tk.Frame(scroll_canvas, bg="#c0c0c0")
+        grid_window = scroll_canvas.create_window((0, 0), window=grid_frame, anchor="nw")
 
-        self.lbl_calibration = tk.Label(grp, text="Calibration: Pending", bg='#c0c0c0',
-                                        font=self.font_classic)
-        self.lbl_calibration.pack(anchor='w')
+        def _on_frame_configure(event):
+            scroll_canvas.configure(scrollregion=scroll_canvas.bbox("all"))
+
+        grid_frame.bind("<Configure>", _on_frame_configure)
+
+        # Cross-platform mousewheel scrolling
+        def _on_mousewheel(event):
+            if event.num == 4:
+                scroll_canvas.yview_scroll(-1, "units")
+            elif event.num == 5:
+                scroll_canvas.yview_scroll(1, "units")
+            elif event.delta:
+                scroll_canvas.yview_scroll(-1 * int(event.delta / 120), "units")
+
+        def _bind_mousewheel(widget):
+            widget.bind("<MouseWheel>", _on_mousewheel)
+            widget.bind("<Button-4>", _on_mousewheel)
+            widget.bind("<Button-5>", _on_mousewheel)
+            for child in widget.winfo_children():
+                _bind_mousewheel(child)
+
+        _bind_mousewheel(scroll_canvas)
+        _bind_mousewheel(grid_frame)
+
+        cfgs = self._cameras_cfg if self._cameras_cfg else [{"id": 1, "name": "Camera 1"}]
+
+        for i, cam_cfg in enumerate(cfgs):
+            cam_id = cam_cfg["id"]
+            cam_name = cam_cfg.get("name", f"Camera {cam_id}")
+            row, col = divmod(i, COLS)
+
+            cell = tk.Frame(grid_frame, bg="#c0c0c0", relief=tk.SUNKEN, bd=2)
+            cell.grid(row=row, column=col, padx=4, pady=4, sticky="nsew")
+            _bind_mousewheel(cell)
+
+            # Camera header
+            tk.Label(cell, text=f"Camera {cam_id} — {cam_name}",
+                     bg="#c0c0c0", font=self.font_title).pack(anchor="w", padx=4, pady=(2, 0))
+
+            # Canvas
+            canvas = tk.Canvas(cell, width=CANVAS_W, height=CANVAS_H,
+                               bg="black", highlightthickness=0)
+            canvas.pack(padx=4, pady=4)
+
+            # Context menu bindings
+            for b in ("<Button-3>", "<Button-2>", "<Control-Button-1>"):
+                canvas.bind(b, lambda e, cid=cam_id: self._open_camera_settings(cid))
+
+            # Status label
+            lbl_status = tk.Label(cell, text="Status: NORMAL", bg="#c0c0c0",
+                                  font=self.font_title, fg="green")
+            lbl_status.pack(anchor="w", padx=4)
+
+            # Calibration status line (CAL-19)
+            lbl_calib = tk.Label(cell, text="Calibration: Initialising...", bg="#c0c0c0",
+                                 font=self.font_classic)
+            lbl_calib.pack(anchor="w", padx=4, pady=(0, 2))
+
+            # Docked calibration control panel (CAL-19)
+            panel = tk.Frame(cell, bg="#dcdcdc", relief=tk.GROOVE, bd=1)
+            panel.pack(fill=tk.X, padx=4, pady=(0, 4))
+
+            top_row = tk.Frame(panel, bg="#dcdcdc")
+            top_row.pack(fill=tk.X, padx=4, pady=2)
+
+            prog = ttk.Progressbar(top_row, orient="horizontal", length=200, mode="determinate")
+            prog.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 5))
+
+            lbl_count = tk.Label(top_row, text="0/100", bg="#dcdcdc", font=self.font_classic)
+            lbl_count.pack(side=tk.RIGHT)
+
+            btn_row = tk.Frame(panel, bg="#dcdcdc")
+            btn_row.pack(fill=tk.X, padx=4, pady=(0, 2))
+
+            btns = {}
+            btns["start"] = tk.Button(btn_row, text="Start", font=self.font_classic,
+                                      command=lambda cid=cam_id: self._on_start_calib(cid),
+                                      bg="#00aa00", fg="white", relief=tk.RAISED, bd=1, width=7)
+            btns["start"].pack(side=tk.LEFT, padx=2)
+
+            btns["pause"] = tk.Button(btn_row, text="Pause", font=self.font_classic,
+                                      command=lambda cid=cam_id: self._on_pause_calib(cid),
+                                      bg="#c0c0c0", relief=tk.RAISED, bd=1, width=7)
+            btns["pause"].pack(side=tk.LEFT, padx=2)
+
+            btns["confirm"] = tk.Button(btn_row, text="Confirm", font=self.font_classic,
+                                        command=lambda cid=cam_id: self._on_confirm_calib(cid),
+                                        bg="#0000aa", fg="white", relief=tk.RAISED, bd=1, width=8)
+            btns["confirm"].pack(side=tk.LEFT, padx=2)
+
+            btns["restart"] = tk.Button(btn_row, text="Restart", font=self.font_classic,
+                                        command=lambda cid=cam_id: self._on_restart_calib(cid),
+                                        bg="#aa0000", fg="white", relief=tk.RAISED, bd=1, width=7)
+            btns["restart"].pack(side=tk.LEFT, padx=2)
+
+            self._canvases[cam_id] = canvas
+            self._status_labels[cam_id] = lbl_status
+            self._calib_labels[cam_id] = lbl_calib
+            self._calib_panels[cam_id] = panel
+            self._calib_progress[cam_id] = prog
+            self._calib_btns[cam_id] = btns
+            self._calib_count_labels[cam_id] = lbl_count
+            self._photos[cam_id] = None
+
+            _bind_mousewheel(cell)
+
+    # ------------------------------------------------------------------
+    # Right Panel (Runtime & Thresholds)
+    # ------------------------------------------------------------------
 
     def _build_runtime_group(self, parent):
-        grp = tk.LabelFrame(parent, text="Runtime Controls", bg='#c0c0c0',
+        grp = tk.LabelFrame(parent, text="Runtime Controls", bg="#c0c0c0",
                             font=self.font_classic, relief=tk.GROOVE, bd=2)
         grp.pack(fill=tk.X, pady=(0, 8), ipadx=5, ipady=3)
 
-        self.scale_interval = self._create_slider(grp, "Frame Interval (s)", 0.1, 5.0, 0.1,
-                                                  self._on_interval)
-        self.scale_delay = self._create_slider(grp, "Display Delay (ms)", 1, 100, 1,
-                                               self._on_delay)
-        self.scale_persistence = self._create_slider(grp, "Persistence Filter", 1, 10, 1,
-                                                     self._on_persistence)
-        self.scale_error = self._create_slider(grp, "Alert Tolerance", 1, 20, 1,
-                                               self._on_error)
-        self.scale_cooldown = self._create_slider(grp, "Report Cooldown (s)", 5, 120, 1,
-                                                  self._on_cooldown)
+        # Inter-camera delay slider (SCH-02, SCH-03)
+        delay_frame = tk.Frame(grp, bg="#c0c0c0")
+        delay_frame.pack(fill=tk.X, pady=2)
+        tk.Label(delay_frame, text="Inter-Camera Delay (s)", bg="#c0c0c0",
+                 font=self.font_classic, width=20, anchor="w").pack(side=tk.LEFT)
+        self.scale_inter_delay = tk.Scale(delay_frame, from_=0.1, to=5.0, resolution=0.1,
+                                          orient=tk.HORIZONTAL, bg="#c0c0c0",
+                                          font=self.font_classic, command=self._on_inter_delay_change,
+                                          length=120)
+        self.scale_inter_delay.pack(side=tk.RIGHT)
+        self.scale_inter_delay.bind("<ButtonRelease-1>", self._on_inter_delay_release)
 
+        # Display delay slider
+        self.scale_delay = self._create_slider(grp, "Display Delay (ms)", 1, 100, 1, self._on_delay)
+
+        # Auto-update checkbutton
         self.var_auto_update = tk.BooleanVar(value=gb.auto_update_calibration)
-        self.chk_auto_update = tk.Checkbutton(grp, text="Auto-Update Calibration",
-                                              variable=self.var_auto_update,
-                                              bg='#c0c0c0', font=self.font_classic,
-                                              command=self._on_auto_update)
-        self.chk_auto_update.pack(anchor='w', pady=(4, 0))
+        tk.Checkbutton(grp, text="Auto-Update Calibration",
+                       variable=self.var_auto_update, bg="#c0c0c0",
+                       font=self.font_classic,
+                       command=self._on_auto_update).pack(anchor="w", pady=(4, 0))
 
     def _build_threshold_group(self, parent):
-        grp = tk.LabelFrame(parent, text="Thresholds", bg='#c0c0c0',
+        grp = tk.LabelFrame(parent, text="Global Thresholds", bg="#c0c0c0",
                             font=self.font_classic, relief=tk.GROOVE, bd=2)
         grp.pack(fill=tk.X, pady=(0, 8), ipadx=5, ipady=3)
+
+        tk.Label(grp, text="(Right-click a feed for overrides)",
+                 bg="#c0c0c0", font=self.font_classic, fg="#555555").pack(anchor="w", pady=(0, 4))
 
         self.scale_alert = self._create_slider(grp, "Alert", 0, 200, 1, self._on_alert)
         self.scale_crit = self._create_slider(grp, "Critical", 0, 200, 1, self._on_crit)
-
-        tk.Label(grp, text="\u2014 High-Priority Zones \u2014", bg='#c0c0c0',
+        tk.Label(grp, text="— High-Priority Zones —", bg="#c0c0c0",
                  font=self.font_classic).pack(pady=(6, 2))
-
         self.scale_hp_alert = self._create_slider(grp, "HP Alert", 0, 200, 1, self._on_hp_alert)
         self.scale_hp_crit = self._create_slider(grp, "HP Critical", 0, 200, 1, self._on_hp_crit)
 
-    def _build_restart_group(self, parent):
-        grp = tk.LabelFrame(parent, text="Settings (Require Restart)", bg='#c0c0c0',
+    def _build_system_group(self, parent):
+        grp = tk.LabelFrame(parent, text="System", bg="#c0c0c0",
                             font=self.font_classic, relief=tk.GROOVE, bd=2)
-        grp.pack(fill=tk.X, ipadx=5, ipady=3)
+        grp.pack(fill=tk.X, pady=(0, 8), ipadx=5, ipady=4)
 
-        # DINO Only checkbox
-        self.var_dino_only = tk.BooleanVar()
-        self.chk_dino_only = tk.Checkbutton(grp, text="DINO Only (no Hybrid)",
-                                            variable=self.var_dino_only,
-                                            bg='#c0c0c0', font=self.font_classic,
-                                            command=self._on_dino_only_staged)
-        self.chk_dino_only.pack(anchor='w')
-
-        # Video Stream checkbox
-        self.var_video = tk.BooleanVar()
-        self.chk_video = tk.Checkbutton(grp, text="Video Stream", variable=self.var_video,
-                                        bg='#c0c0c0', font=self.font_classic,
-                                        command=self._on_video_staged)
-        self.chk_video.pack(anchor='w')
-
-        # URL entry — only visible when Video Stream is checked
-        self.url_row = tk.Frame(grp, bg='#c0c0c0')
-        # not packed yet — shown/hidden by _on_video_staged
-        tk.Label(self.url_row, text="URL:", bg='#c0c0c0',
-                 font=self.font_classic).pack(side=tk.LEFT)
-        self.entry_url = tk.Entry(self.url_row, width=22, font=self.font_classic)
-        self.entry_url.pack(side=tk.LEFT, padx=3)
-        self.entry_url.insert(0, self._staged_url)
-        self.entry_url.bind("<KeyRelease>", self._on_url_staged)
-
-        # Calibration frames entry
-        calib_row = tk.Frame(grp, bg='#c0c0c0')
-        calib_row.pack(fill=tk.X, pady=3)
-        tk.Label(calib_row, text="Calibration Frames:", bg='#c0c0c0',
-                 font=self.font_classic).pack(side=tk.LEFT)
-        self.entry_calib = tk.Entry(calib_row, width=5, font=self.font_classic)
-        self.entry_calib.pack(side=tk.LEFT, padx=5)
-        self.entry_calib.bind("<KeyRelease>", self._on_calib_frames_staged)
-
-        # Email Settings button — opens a separate window
-        tk.Button(grp, text="Email Settings...", command=self._open_email_settings,
-                  relief=tk.RAISED, bd=2, bg='#c0c0c0',
-                  font=self.font_classic).pack(pady=3, fill=tk.X)
-
-        # Modify Mask button
-        tk.Button(grp, text="Modify Mask...", command=self._open_mask_editor,
-                  relief=tk.RAISED, bd=2, bg='#c0c0c0',
-                  font=self.font_classic).pack(pady=3, fill=tk.X)
-
-        # "Restart Required" label — hidden until a staged value diverges
-        self.lbl_restart_hint = tk.Label(grp, text="Restart required", bg='#c0c0c0',
-                                         fg='#006400', font=self.font_restart_hint)
-        # not packed yet
-
-        # Apply & Restart button
-        self.btn_apply_restart = tk.Button(grp, text="Apply && Restart",
-                                           command=self._apply_and_restart,
-                                           relief=tk.RAISED, bd=2, bg='#c0c0c0',
-                                           font=self.font_classic, state=tk.DISABLED)
-        self.btn_apply_restart.pack(pady=5, fill=tk.X)
-
-    # ─── Widget helpers ───────────────────────────────────────────
+        btn_reset = tk.Button(grp, text="Reset to Initial Setup...",
+                              command=self._on_reset_clicked,
+                              relief=tk.RAISED, bd=2, bg="#b33939", fg="white",
+                              activebackground="#8b0000", activeforeground="white",
+                              font=self.font_bold)
+        btn_reset.pack(fill=tk.X, padx=3, pady=2)
 
     def _create_slider(self, parent, label_text, from_, to, resolution, command):
-        frame = tk.Frame(parent, bg='#c0c0c0')
+        frame = tk.Frame(parent, bg="#c0c0c0")
         frame.pack(fill=tk.X, pady=2)
-        tk.Label(frame, text=label_text, bg='#c0c0c0', font=self.font_classic,
-                 width=18, anchor='w').pack(side=tk.LEFT)
+        tk.Label(frame, text=label_text, bg="#c0c0c0",
+                 font=self.font_classic, width=18, anchor="w").pack(side=tk.LEFT)
         scale = tk.Scale(frame, from_=from_, to=to, resolution=resolution,
-                         orient=tk.HORIZONTAL, bg='#c0c0c0', font=self.font_classic,
-                         command=command, length=120)
+                         orient=tk.HORIZONTAL, bg="#c0c0c0",
+                         font=self.font_classic, command=command, length=120)
         scale.pack(side=tk.RIGHT)
         return scale
 
-    # ─── Initialise controls from current globals ─────────────────
-
     def _init_controls(self):
-        # Runtime sliders
-        self.scale_interval.set(gb.secondsForOneFrame)
+        init_delay = self._settings_data.get("inter_camera_delay", 0.5)
+        self.scale_inter_delay.set(init_delay)
         self.scale_delay.set(gb.delay)
-        self.scale_persistence.set(gb.REQUIRED_PERSISTENCE)
-        self.scale_error.set(gb.allowed_error)
-        self.scale_cooldown.set(gb.anomaly_report_wait)
-
-        # Threshold sliders
         self.scale_alert.set(gb.TIER_THRESHOLDS["ALERT"])
         self.scale_crit.set(gb.TIER_THRESHOLDS["CRITICAL"])
         self.scale_hp_alert.set(gb.TIER_THRESHOLDS_HIGH_PRIORITY["ALERT"])
         self.scale_hp_crit.set(gb.TIER_THRESHOLDS_HIGH_PRIORITY["CRITICAL"])
 
-        # Restart-required controls — set to current *active* values
-        self._staged_video_stream = gb.doVideoStream
-        self._staged_calib_frames = gb.totalCalibrationFrames
-        self._staged_dino_only = gb.DINO_ONLY
-        self._mask_modified = False
+    # ------------------------------------------------------------------
+    # Slider Callbacks
+    # ------------------------------------------------------------------
 
-        self.var_video.set(gb.doVideoStream)
-        self.var_dino_only.set(gb.DINO_ONLY)
-        self._toggle_url_visibility()
-        self.entry_calib.delete(0, tk.END)
-        self.entry_calib.insert(0, str(gb.totalCalibrationFrames))
+    def _on_inter_delay_change(self, val):
+        delay_f = float(val)
+        if self._feed_manager:
+            self._feed_manager.set_inter_camera_delay(delay_f)
 
-    # ─── Runtime slider callbacks (write immediately) ─────────────
-
-    def _on_interval(self, val):
-        gb.secondsForOneFrame = float(val)
+    def _on_inter_delay_release(self, event):
+        delay_f = float(self.scale_inter_delay.get())
+        self._settings_data["inter_camera_delay"] = delay_f
+        save_settings(self._settings_data)
+        self.log(f"Inter-camera delay saved: {delay_f:.1f}s")
 
     def _on_delay(self, val):
         gb.delay = int(float(val))
 
-    def _on_persistence(self, val):
-        gb.REQUIRED_PERSISTENCE = int(float(val))
-
-    def _on_error(self, val):
-        gb.allowed_error = int(float(val))
-
-    def _on_cooldown(self, val):
-        gb.anomaly_report_wait = int(float(val))
-
     def _on_auto_update(self):
         gb.auto_update_calibration = self.var_auto_update.get()
 
-    # ─── Threshold slider callbacks (write immediately) ───────────
-
     def _on_alert(self, val):
-        gb.TIER_THRESHOLDS["ALERT"] = float(val)
+        val = float(val)
+        gb.TIER_THRESHOLDS["ALERT"] = val
+        if "default_thresholds" in self._settings_data:
+            self._settings_data["default_thresholds"]["ALERT"] = val
 
     def _on_crit(self, val):
-        gb.TIER_THRESHOLDS["CRITICAL"] = float(val)
+        val = float(val)
+        gb.TIER_THRESHOLDS["CRITICAL"] = val
+        if "default_thresholds" in self._settings_data:
+            self._settings_data["default_thresholds"]["CRITICAL"] = val
 
     def _on_hp_alert(self, val):
-        gb.TIER_THRESHOLDS_HIGH_PRIORITY["ALERT"] = float(val)
+        val = float(val)
+        gb.TIER_THRESHOLDS_HIGH_PRIORITY["ALERT"] = val
+        if "default_thresholds" in self._settings_data:
+            self._settings_data["default_thresholds"]["HIGH_PRIORITY_ALERT"] = val
 
     def _on_hp_crit(self, val):
-        gb.TIER_THRESHOLDS_HIGH_PRIORITY["CRITICAL"] = float(val)
+        val = float(val)
+        gb.TIER_THRESHOLDS_HIGH_PRIORITY["CRITICAL"] = val
+        if "default_thresholds" in self._settings_data:
+            self._settings_data["default_thresholds"]["HIGH_PRIORITY_CRITICAL"] = val
 
-    # ─── Restart-required staged callbacks (GUI-only) ─────────────
+    # ------------------------------------------------------------------
+    # Calibration Session Actions (CAL-10 to CAL-24)
+    # ------------------------------------------------------------------
 
-    def _on_dino_only_staged(self):
-        """Toggle is GUI-only. Does NOT touch gb.DINO_ONLY."""
-        self._staged_dino_only = self.var_dino_only.get()
-        self._check_restart_needed()
+    def _on_start_calib(self, camera_id: int):
+        feed = self._get_feed(camera_id)
+        if feed:
+            feed.start_calibration_session()
+            self.log(f"[Cam {camera_id}] Calibration collection started.")
 
-    def _on_video_staged(self):
-        """Toggle is GUI-only. Does NOT touch gb.doVideoStream."""
-        self._staged_video_stream = self.var_video.get()
-        self._toggle_url_visibility()
-        self._check_restart_needed()
+    def _on_pause_calib(self, camera_id: int):
+        feed = self._get_feed(camera_id)
+        if feed:
+            feed.pause_calibration_session()
+            self.log(f"[Cam {camera_id}] Calibration collection paused.")
 
-    def _toggle_url_visibility(self):
-        """Show URL entry when video stream is checked, hide otherwise."""
-        if self.var_video.get():
-            self.url_row.pack(fill=tk.X, pady=2, after=self.chk_video)
+    def _on_confirm_calib(self, camera_id: int):
+        feed = self._get_feed(camera_id)
+        if feed:
+            ok, err = feed.confirm_calibration_session()
+            if not ok:
+                messagebox.showerror("Calibration Error", err, parent=self.root)
+
+    def _on_restart_calib(self, camera_id: int):
+        feed = self._get_feed(camera_id)
+        if feed:
+            feed.restart_calibration_session()
+            self.log(f"[Cam {camera_id}] Calibration session restarted (uncommitted frames discarded).")
+
+    # ------------------------------------------------------------------
+    # Calibration UI Updater (called every tick)
+    # ------------------------------------------------------------------
+
+    def update_calibration_ui(self, camera_id: int, feed):
+        calib_lbl = self._calib_labels.get(camera_id)
+        panel = self._calib_panels.get(camera_id)
+        prog = self._calib_progress.get(camera_id)
+        count_lbl = self._calib_count_labels.get(camera_id)
+        btns = self._calib_btns.get(camera_id)
+
+        if not calib_lbl or not panel or not btns:
+            return
+
+        session = feed.calibration_session
+        if session is not None:
+            # Active session
+            panel.pack(fill=tk.X, padx=4, pady=(0, 4))
+            target = session.target_frames
+            collected = session.collected_count
+            state_str = session.state.value
+
+            calib_lbl.config(text=f"Calibrating {collected}/{target} — {state_str}")
+            prog.config(maximum=target, value=collected)
+            count_lbl.config(text=f"{collected}/{target}")
+
+            # Button states
+            btns["start"].config(state=tk.NORMAL if session.can_start else tk.DISABLED)
+            btns["pause"].config(state=tk.NORMAL if session.can_pause else tk.DISABLED)
+            btns["confirm"].config(state=tk.NORMAL if session.can_confirm else tk.DISABLED)
+            btns["restart"].config(state=tk.NORMAL if session.can_restart else tk.DISABLED)
         else:
-            self.url_row.pack_forget()
+            # Not in session -> show status line and hide docked panel
+            calib_lbl.config(text=feed.calibration_status)
+            panel.pack_forget()
 
-    def _on_url_staged(self, event=None):
-        """Entry is GUI-only. Does NOT touch gb.url."""
-        self._staged_url = self.entry_url.get().strip()
-        self._check_restart_needed()
+    # ------------------------------------------------------------------
+    # Right-Click Per-Camera Settings Dialog
+    # ------------------------------------------------------------------
 
-    def _on_calib_frames_staged(self, event=None):
-        """Entry is GUI-only. Does NOT touch gb.totalCalibrationFrames."""
-        try:
-            val = int(self.entry_calib.get())
-            if val > 0:
-                self._staged_calib_frames = val
-        except ValueError:
-            pass
-        self._check_restart_needed()
+    def _open_camera_settings(self, camera_id: int):
+        feed = self._get_feed(camera_id)
+        if feed is None:
+            self.log(f"[Cam {camera_id}] Feed not ready.")
+            return
 
-    def _open_mask_editor(self):
-        """Opens the paint-like mask editor as a modal window."""
-        MaskEditor(self.root, mask_path="Assets/mask.png",
-                   on_save_callback=self._on_mask_saved)
-
-    def _on_mask_saved(self):
-        """Called when the mask editor saves successfully."""
-        self._mask_modified = True
-        self._check_restart_needed()
-        self.log("Mask saved. Click 'Apply & Restart' to load new mask.")
-
-    # ─── Email Settings Window ────────────────────────────────────
-
-    def _open_email_settings(self):
-        """Opens a separate Toplevel window to edit email sender, receiver, and password."""
         win = tk.Toplevel(self.root)
-        win.title("Email Settings")
-        win.configure(bg='#c0c0c0')
+        win.title(f"Camera {camera_id} — {feed.name} Settings")
+        win.configure(bg="#c0c0c0")
         win.resizable(False, False)
-        win.grab_set()  # modal
+        win.transient(self.root)
 
         font = self.font_classic
-        font_bold = self.font_restart_hint
+        font_bold = self.font_title
 
-        # Banner
-        tk.Label(win, text="Email Configuration", bg='#000080', fg='white',
-                 font=font_bold, anchor='w', padx=8).pack(fill=tk.X)
+        tk.Label(win, text=f"Camera {camera_id} — {feed.name}",
+                 bg="#000080", fg="white", font=font_bold,
+                 padx=8).pack(fill=tk.X)
 
-        body = tk.LabelFrame(win, text="SMTP Settings", bg='#c0c0c0',
-                             font=font, relief=tk.GROOVE, bd=2)
+        body = tk.Frame(win, bg="#c0c0c0")
         body.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
 
-        # Sender
-        row1 = tk.Frame(body, bg='#c0c0c0')
-        row1.pack(fill=tk.X, pady=3, padx=5)
-        tk.Label(row1, text="Sender Email:", bg='#c0c0c0', font=font, width=15,
-                 anchor='w').pack(side=tk.LEFT)
-        entry_sender = tk.Entry(row1, width=30, font=font)
-        entry_sender.pack(side=tk.LEFT, padx=3)
-        entry_sender.insert(0, gb.EMAIL_SENDER)
+        # 1. Per-Camera Controls
+        ctrl_frame = tk.LabelFrame(body, text="Camera Settings", bg="#c0c0c0",
+                                   font=font, relief=tk.GROOVE, bd=2)
+        ctrl_frame.pack(fill=tk.X, pady=(0, 8), padx=2, ipady=3)
 
-        # Password
-        row2 = tk.Frame(body, bg='#c0c0c0')
-        row2.pack(fill=tk.X, pady=3, padx=5)
-        tk.Label(row2, text="App Password:", bg='#c0c0c0', font=font, width=15,
-                 anchor='w').pack(side=tk.LEFT)
-        entry_password = tk.Entry(row2, width=30, font=font, show="*")
-        entry_password.pack(side=tk.LEFT, padx=3)
-        entry_password.insert(0, gb.EMAIL_PASSWORD)
+        def make_cam_slider(parent, label, from_, to, res, getter, setter):
+            r = tk.Frame(parent, bg="#c0c0c0"); r.pack(fill=tk.X, pady=2)
+            tk.Label(r, text=label, bg="#c0c0c0", font=font, width=22, anchor="w").pack(side=tk.LEFT)
+            s = tk.Scale(r, from_=from_, to=to, resolution=res, orient=tk.HORIZONTAL,
+                         bg="#c0c0c0", font=font, command=lambda v: setter(v), length=130)
+            s.set(getter())
+            s.pack(side=tk.RIGHT)
+            return s
 
-        # Receiver
-        row3 = tk.Frame(body, bg='#c0c0c0')
-        row3.pack(fill=tk.X, pady=3, padx=5)
-        tk.Label(row3, text="Receiver Email:", bg='#c0c0c0', font=font, width=15,
-                 anchor='w').pack(side=tk.LEFT)
-        entry_receiver = tk.Entry(row3, width=30, font=font)
-        entry_receiver.pack(side=tk.LEFT, padx=3)
-        entry_receiver.insert(0, gb.EMAIL_RECEIVER)
+        make_cam_slider(ctrl_frame, "Alert Tolerance", 1, 20, 1,
+                        lambda: feed.allowed_error,
+                        lambda v: setattr(feed, "allowed_error", int(float(v))))
+        make_cam_slider(ctrl_frame, "Report Cooldown (s)", 5, 120, 1,
+                        lambda: feed.anomaly_report_wait,
+                        lambda v: setattr(feed, "anomaly_report_wait", int(float(v))))
 
-        # Note
-        tk.Label(body, text="Changes are saved immediately.",
-                 bg='#c0c0c0', fg='#006400', font=font_bold).pack(pady=(5, 0))
+        # 2. Threshold Overrides
+        thresh_frame = tk.LabelFrame(body, text="Threshold Overrides", bg="#c0c0c0",
+                                     font=font, relief=tk.GROOVE, bd=2)
+        thresh_frame.pack(fill=tk.X, pady=(0, 8), padx=2, ipady=3)
 
-        # Status label for feedback
-        lbl_email_status = tk.Label(body, text="", bg='#c0c0c0', font=font)
-        lbl_email_status.pack(pady=2)
+        var_override = tk.BooleanVar(value=bool(feed.thresholds))
+        sliders_subframe = tk.Frame(thresh_frame, bg="#c0c0c0")
 
-        # Buttons
-        btn_frame = tk.Frame(body, bg='#c0c0c0')
-        btn_frame.pack(fill=tk.X, padx=5, pady=5)
+        def on_toggle_override():
+            if var_override.get():
+                if feed.thresholds is None:
+                    feed.thresholds = {
+                        "ALERT": gb.TIER_THRESHOLDS["ALERT"],
+                        "CRITICAL": gb.TIER_THRESHOLDS["CRITICAL"],
+                        "HIGH_PRIORITY_ALERT": gb.TIER_THRESHOLDS_HIGH_PRIORITY["ALERT"],
+                        "HIGH_PRIORITY_CRITICAL": gb.TIER_THRESHOLDS_HIGH_PRIORITY["CRITICAL"],
+                    }
+                sliders_subframe.pack(fill=tk.X, padx=4, pady=2)
+                self.log(f"[Cam {camera_id}] Custom thresholds enabled.")
+            else:
+                feed.thresholds = None
+                sliders_subframe.pack_forget()
+                self.log(f"[Cam {camera_id}] Reverted to global thresholds.")
 
-        def save_email():
-            gb.EMAIL_SENDER = entry_sender.get().strip()
-            gb.EMAIL_PASSWORD = entry_password.get().strip()
-            gb.EMAIL_RECEIVER = entry_receiver.get().strip()
-            save_settings(stream_url=self._staged_url)
-            lbl_email_status.config(text="Saved.", fg='#006400')
-            self.log(f"Email settings updated.")
-            win.after(800, win.destroy)
+        tk.Checkbutton(thresh_frame, text="Enable per-camera threshold overrides",
+                       variable=var_override, bg="#c0c0c0", font=font,
+                       command=on_toggle_override).pack(anchor="w", padx=4, pady=2)
 
-        tk.Button(btn_frame, text="Save", command=save_email,
-                  relief=tk.RAISED, bd=2, bg='#c0c0c0', font=font,
-                  width=10).pack(side=tk.LEFT, padx=5)
-        tk.Button(btn_frame, text="Cancel", command=win.destroy,
-                  relief=tk.RAISED, bd=2, bg='#c0c0c0', font=font,
-                  width=10).pack(side=tk.LEFT, padx=5)
+        if var_override.get():
+            sliders_subframe.pack(fill=tk.X, padx=4, pady=2)
 
-    # ─── Restart logic ────────────────────────────────────────────
+        def make_thresh_slider(label, key, hp=False):
+            r = tk.Frame(sliders_subframe, bg="#c0c0c0"); r.pack(fill=tk.X, pady=2)
+            tk.Label(r, text=label, bg="#c0c0c0", font=font, width=18, anchor="w").pack(side=tk.LEFT)
+            initial = (feed.thresholds or {}).get(
+                key,
+                gb.TIER_THRESHOLDS_HIGH_PRIORITY[key.replace("HIGH_PRIORITY_", "")] if hp else gb.TIER_THRESHOLDS[key]
+            )
+            def on_val(v, k=key):
+                if feed.thresholds is not None:
+                    feed.thresholds[k] = float(v)
+            s = tk.Scale(r, from_=0, to=200, resolution=0.5, orient=tk.HORIZONTAL,
+                         bg="#c0c0c0", font=font, command=on_val, length=130)
+            s.set(initial)
+            s.pack(side=tk.RIGHT)
 
-    def _check_restart_needed(self):
-        """Show/hide the 'Restart required' hint and enable/disable the button."""
-        needs_restart = (
-            self._staged_video_stream != gb.doVideoStream or
-            self._staged_calib_frames != gb.totalCalibrationFrames or
-            self._staged_dino_only != gb.DINO_ONLY or
-            self._mask_modified
-        )
-        if needs_restart:
-            self.lbl_restart_hint.pack(pady=(5, 0))
-            self.btn_apply_restart.config(state=tk.NORMAL)
-        else:
-            self.lbl_restart_hint.pack_forget()
-            self.btn_apply_restart.config(state=tk.DISABLED)
+        make_thresh_slider("Alert", "ALERT")
+        make_thresh_slider("Critical", "CRITICAL")
+        make_thresh_slider("HP Alert", "HIGH_PRIORITY_ALERT", hp=True)
+        make_thresh_slider("HP Critical", "HIGH_PRIORITY_CRITICAL", hp=True)
 
-    def _apply_and_restart(self):
-        """Commit staged values to globals, then trigger a full recalibration.
-        main.py's update_loop detects self._restart_requested and re-runs setup."""
-        # Commit staged values
-        gb.doVideoStream = self._staged_video_stream
-        gb.totalCalibrationFrames = self._staged_calib_frames
-        gb.DINO_ONLY = self._staged_dino_only
-        if gb.doVideoStream and self._staged_url:
-            gb.url = self._staged_url
+        # 3. Zone Mask Modification
+        mask_frame = tk.LabelFrame(body, text="Zone Mask", bg="#c0c0c0",
+                                   font=font, relief=tk.GROOVE, bd=2)
+        mask_frame.pack(fill=tk.X, pady=(0, 8), padx=2, ipady=3)
 
-        # Reset calibration state
-        gb.initialCalibration = True
-        gb.currentCalibrationFramesHeld = 0
-        gb.calibration_store = []
-        gb.calibration_frames = []
-        gb.calibration_array = None
-        gb.current_highlight = None
+        def open_mask():
+            def on_mask_saved():
+                feed.update_mask()
+                self.log(f"[Cam {camera_id}] Mask updated and active.")
+            MaskEditor(win, mask_path=feed.mask_path, on_save_callback=on_mask_saved)
 
-        # Save all settings to file
-        save_settings(stream_url=self._staged_url)
+        tk.Button(mask_frame, text="Modify Mask Painter...", command=open_mask,
+                  relief=tk.RAISED, bd=2, bg="#c0c0c0", font=font).pack(fill=tk.X, padx=6, pady=2)
 
-        # Signal main.py to re-open camera / reload mask
-        self._restart_requested = True
-        self._mask_modified = False
+        # 4. Calibration Management (CAL-20, CAL-21)
+        cal_sec = tk.LabelFrame(body, text="Calibration", bg="#c0c0c0",
+                                font=font, relief=tk.GROOVE, bd=2)
+        cal_sec.pack(fill=tk.X, pady=(0, 8), padx=2, ipady=3)
 
-        # Hide the hint — staged values now match active
-        self.lbl_restart_hint.pack_forget()
-        self.btn_apply_restart.config(state=tk.DISABLED)
+        def on_add_calib():
+            target_str = simpledialog.askstring(
+                "Add Calibration Frames",
+                f"Enter number of frames to add for Camera {camera_id} (1–500):",
+                initialvalue="30",
+                parent=win
+            )
+            if not target_str:
+                return
+            try:
+                target = int(target_str.strip())
+                if target < 1 or target > 500:
+                    raise ValueError()
+            except ValueError:
+                messagebox.showerror("Invalid Input", "Please enter an integer between 1 and 500.", parent=win)
+                return
 
-        self.lbl_calibration.config(text="Calibration: Restarting...")
-        self.log("Settings applied. Restarting pipeline...")
+            feed.start_calibration_session(target_frames=target)
+            self.log(f"[Cam {camera_id}] Started Add Calibration Session (target: {target} frames).")
+            win.destroy()
 
-    @property
-    def restart_requested(self):
-        """main.py polls this once per frame."""
-        return self._restart_requested
+        def on_remove_calib():
+            n = len(feed.calibration_store)
+            confirm = messagebox.askyesno(
+                "Delete Calibration",
+                f"Permanently delete all {n} calibration frames for Camera {camera_id} ({feed.name})?\n\n"
+                "Detection stops on this camera until you calibrate again.",
+                parent=win,
+                icon="warning"
+            )
+            if not confirm:
+                return
 
-    def clear_restart_flag(self):
-        self._restart_requested = False
+            ok, err = feed.remove_all_calibration_and_recalibrate()
+            if not ok:
+                messagebox.showerror("Delete Failed", err, parent=win)
+            else:
+                win.destroy()
 
-    # ─── External API (called by main.py) ─────────────────────────
+        tk.Button(cal_sec, text="Add calibration frames...", command=on_add_calib,
+                  relief=tk.RAISED, bd=2, bg="#c0c0c0", font=font).pack(fill=tk.X, padx=6, pady=2)
+        tk.Button(cal_sec, text="Remove all calibration frames and recalibrate...", command=on_remove_calib,
+                  relief=tk.RAISED, bd=2, bg="#c0c0c0", fg="#880000", font=font).pack(fill=tk.X, padx=6, pady=2)
 
-    def update_frame(self, frame):
-        rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        rgb_frame = cv2.resize(rgb_frame, (640, 480))
+        # Close button
+        tk.Button(win, text="Close", command=win.destroy,
+                  relief=tk.RAISED, bd=2, bg="#c0c0c0", font=font, width=12).pack(pady=6)
 
-        image = Image.fromarray(rgb_frame)
-        self.photo = ImageTk.PhotoImage(image=image)
-        self.canvas.create_image(0, 0, image=self.photo, anchor=tk.NW)
+        win.update_idletasks()
+        try:
+            win.grab_set()
+        except tk.TclError:
+            pass
 
-        if gb.initialCalibration:
-            self.lbl_calibration.config(
-                text=f"Calibration: {gb.currentCalibrationFramesHeld}/{gb.totalCalibrationFrames}")
-        else:
-            self.lbl_calibration.config(text="Calibration: Complete")
+    # ------------------------------------------------------------------
+    # Frame & Status Updates (Main Thread)
+    # ------------------------------------------------------------------
 
-    def update_status(self, status_text):
-        self.lbl_status.config(text=f"Status: {status_text}")
-        color_map = {"NORMAL": "green", "ALERT": "orange", "CRITICAL": "red"}
-        self.lbl_status.config(fg=color_map.get(status_text, "green"))
+    def update_camera_frame(self, camera_id: int, frame: np.ndarray):
+        canvas = self._canvases.get(camera_id)
+        if canvas is None or frame is None:
+            return
+        rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        rgb = cv2.resize(rgb, (CANVAS_W, CANVAS_H))
+        img = Image.fromarray(rgb)
+        photo = ImageTk.PhotoImage(image=img)
+        self._photos[camera_id] = photo
+        canvas.create_image(0, 0, image=photo, anchor=tk.NW)
 
-    def log(self, message):
+    def update_camera_status(self, camera_id: int, status_text: str):
+        lbl = self._status_labels.get(camera_id)
+        if lbl is None:
+            return
+        lbl.config(text=f"Status: {status_text}")
+        color_map = {
+            "NORMAL": "green",
+            "ALERT": "orange",
+            "CRITICAL": "red",
+            "OFFLINE": "#888888"
+        }
+        lbl.config(fg=color_map.get(status_text, "green"))
+
+    def log(self, message: str):
         ts = time.strftime("%H:%M:%S")
-        line = f"[{ts}] {message}\n"
-        self.terminal.config(state=tk.NORMAL)
-        self.terminal.insert(tk.END, line)
-        self.terminal.see(tk.END)
-        self.terminal.config(state=tk.DISABLED)
-        self.statusbar.config(text=f"\u25b8 {message}")
+        print(f"[{ts}] {message}")
+        self.statusbar.config(text=f"▸ {message}")
 
-    def is_running(self):
+    def is_running(self) -> bool:
         return self._running
 
-    def on_closing(self):
-        # Save all current settings before exit
-        save_settings(stream_url=self._staged_url)
+    def _on_reset_clicked(self):
+        confirmed = messagebox.askyesno(
+            "Reset Application",
+            "Are you sure? This will delete saved settings and restart into the Setup Wizard.",
+            parent=self.root,
+            icon="warning"
+        )
+        if not confirmed:
+            return
+
+        settings_path = os.path.join("Assets", "settings.json")
+        if os.path.exists(settings_path):
+            try:
+                os.remove(settings_path)
+            except OSError as e:
+                print(f"[Reset] Error deleting {settings_path}: {e}")
+
         self._running = False
         self.root.destroy()
+        os.execv(sys.executable, [sys.executable] + sys.argv)
+
+    def on_closing(self):
+        # Check if any camera has uncommitted calibration session frames (CAL-17)
+        uncommitted_cams = []
+        for feed in self._feeds.values():
+            if feed.calibration_session and feed.calibration_session.collected_count > 0:
+                uncommitted_cams.append((feed.id, feed.calibration_session.collected_count))
+
+        if uncommitted_cams:
+            details = ", ".join([f"Cam {cid}: {cnt} frames" for cid, cnt in uncommitted_cams])
+            ans = messagebox.askyesno(
+                "Uncommitted Calibration Frames",
+                f"There are uncommitted calibration frames ({details}).\n\nDiscard these uncommitted frames and exit?",
+                parent=self.root
+            )
+            if not ans:
+                return
+
+        save_settings(self._settings_data)
+        self._running = False
+        self.root.destroy()
+

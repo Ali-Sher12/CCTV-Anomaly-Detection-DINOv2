@@ -1,106 +1,72 @@
-"""Persists GUI settings to a JSON file so they survive app restarts.
+"""settings_store.py — Persists app settings to JSON (schema v2).
 
-Reads on import, writes on save_settings(). All values fall back to
-the current Globals.py defaults if the file doesn't exist or a key
-is missing.
+load_settings() -> returns settings dict if setup_complete is True, else None.
+save_settings(data) -> writes the clean dict without obsolete persistence keys.
 """
 
 import json
 import os
-import Globals as gb
 
-SETTINGS_FILE = "Assets/settings.json"
-
-# Keys that map directly to gb.* attributes
-_RUNTIME_KEYS = {
-    "secondsForOneFrame": float,
-    "delay": int,
-    "REQUIRED_PERSISTENCE": int,
-    "allowed_error": int,
-    "anomaly_report_wait": int,
-    "auto_update_calibration": bool,
-}
-
-_THRESHOLD_KEYS = {
-    "TIER_THRESHOLDS_ALERT": float,
-    "TIER_THRESHOLDS_CRITICAL": float,
-    "TIER_THRESHOLDS_HIGH_PRIORITY_ALERT": float,
-    "TIER_THRESHOLDS_HIGH_PRIORITY_CRITICAL": float,
-}
-
-_RESTART_KEYS = {
-    "totalCalibrationFrames": int,
-    "doVideoStream": bool,
-    "DINO_ONLY": bool,
-    "stream_url": str,
-    "EMAIL_SENDER": str,
-    "EMAIL_PASSWORD": str,
-    "EMAIL_RECEIVER": str,
-}
+SETTINGS_FILE = os.path.join("Assets", "settings.json")
 
 
-def load_settings():
-    """Load saved settings from disk and apply them to Globals."""
+def load_settings() -> dict | None:
+    """Return the settings dict, or None if wizard must run."""
     if not os.path.exists(SETTINGS_FILE):
-        return
-
+        return None
     try:
         with open(SETTINGS_FILE, "r") as f:
             data = json.load(f)
     except (json.JSONDecodeError, OSError):
+        return None
+
+    if not isinstance(data, dict) or not data.get("setup_complete", False):
+        return None
+
+    # Strip legacy required_persistence if present (PER-03)
+    if "cameras" in data and isinstance(data["cameras"], list):
+        for cam in data["cameras"]:
+            cam.pop("required_persistence", None)
+
+    return data
+
+
+def save_settings(data: dict):
+    """Write settings dict to disk, filtering out obsolete keys."""
+    if not isinstance(data, dict):
         return
 
-    # Runtime
-    for key, cast in _RUNTIME_KEYS.items():
-        if key in data:
-            setattr(gb, key, cast(data[key]))
-
-    # Thresholds (flat keys → nested dicts)
-    if "TIER_THRESHOLDS_ALERT" in data:
-        gb.TIER_THRESHOLDS["ALERT"] = float(data["TIER_THRESHOLDS_ALERT"])
-    if "TIER_THRESHOLDS_CRITICAL" in data:
-        gb.TIER_THRESHOLDS["CRITICAL"] = float(data["TIER_THRESHOLDS_CRITICAL"])
-    if "TIER_THRESHOLDS_HIGH_PRIORITY_ALERT" in data:
-        gb.TIER_THRESHOLDS_HIGH_PRIORITY["ALERT"] = float(data["TIER_THRESHOLDS_HIGH_PRIORITY_ALERT"])
-    if "TIER_THRESHOLDS_HIGH_PRIORITY_CRITICAL" in data:
-        gb.TIER_THRESHOLDS_HIGH_PRIORITY["CRITICAL"] = float(data["TIER_THRESHOLDS_HIGH_PRIORITY_CRITICAL"])
-
-    # Restart-required
-    for key, cast in _RESTART_KEYS.items():
-        if key == "stream_url":
-            continue  # handled separately
-        if key in data:
-            setattr(gb, key, cast(data[key]))
-
-    if "stream_url" in data and gb.doVideoStream:
-        gb.url = data["stream_url"]
-    elif not gb.doVideoStream:
-        gb.url = 0
-
-    return data  # return raw dict so GUI can pull stream_url etc.
-
-
-def save_settings(stream_url=""):
-    """Snapshot all current gb.* values to the settings file."""
-    data = {}
-
-    # Runtime
-    for key in _RUNTIME_KEYS:
-        data[key] = getattr(gb, key)
-
-    # Thresholds
-    data["TIER_THRESHOLDS_ALERT"] = gb.TIER_THRESHOLDS["ALERT"]
-    data["TIER_THRESHOLDS_CRITICAL"] = gb.TIER_THRESHOLDS["CRITICAL"]
-    data["TIER_THRESHOLDS_HIGH_PRIORITY_ALERT"] = gb.TIER_THRESHOLDS_HIGH_PRIORITY["ALERT"]
-    data["TIER_THRESHOLDS_HIGH_PRIORITY_CRITICAL"] = gb.TIER_THRESHOLDS_HIGH_PRIORITY["CRITICAL"]
-
-    # Restart-required
-    for key in _RESTART_KEYS:
-        if key == "stream_url":
-            data["stream_url"] = stream_url
-        else:
-            data[key] = getattr(gb, key)
+    # Deep clean cameras list
+    if "cameras" in data and isinstance(data["cameras"], list):
+        for cam in data["cameras"]:
+            cam.pop("required_persistence", None)
 
     os.makedirs(os.path.dirname(SETTINGS_FILE), exist_ok=True)
     with open(SETTINGS_FILE, "w") as f:
         json.dump(data, f, indent=2)
+
+
+def default_settings() -> dict:
+    """Return a bare-minimum settings skeleton for the wizard."""
+    return {
+        "setup_complete": False,
+        "device_tier": "MID",
+        "dino_model_version": "Models/DINO/dinov3-vitb16",
+        "yolo_model_version": "Models/YOLO/yolo26m.pt",
+        "dino_only": False,
+        "total_calibration_frames": 100,
+        "inter_camera_delay": 0.5,
+        "email": {
+            "sender": "",
+            "app_password": "",
+            "receivers": []
+        },
+        "default_thresholds": {
+            "ALERT": 45.0,
+            "CRITICAL": 50.0,
+            "HIGH_PRIORITY_ALERT": 35.0,
+            "HIGH_PRIORITY_CRITICAL": 40.0
+        },
+        "cameras": []
+    }
+

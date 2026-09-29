@@ -1,0 +1,30 @@
+# Passive Anomaly Detector — Python dependencies
+#
+# CPU-only install (no CUDA):
+#   pip install -r requirements.txt --extra-index-url https://download.pytorch.org/whl/cpu
+#
+# Or use the provided install.sh / install.bat which handle this automatically.
+
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch
+torchvision
+transformers
+numpy
+opencv-python
+pillow
+psutil
+ultralytics
+pyttsx3
+scipy
+huggingface_hub
+safetensors
+tqdm
+PyYAML
+certifi
+filelock
+fsspec
+packaging
+regex
+idna
+typing_extensions
+pytest

@@ -1,0 +1,18 @@
+{
+  "heartbeat_interval": 5,
+  "stale_after": 60,
+  "check_interval": 20,
+  "startup_grace": 120,
+  "restart_grace": 150,
+  "terminate_timeout": 10,
+  "max_restarts": 3,
+  "restart_window": 600,
+  "app_install_path": "/home/ali-sher/Downloads/Stuff/Anomaly Detection",
+  "app_entrypoint": [
+    "python",
+    "main.py"
+  ],
+  "heartbeat_path": "Assets/heartbeat.txt",
+  "pid_path": "Assets/app.pid",
+  "email": null
+}
