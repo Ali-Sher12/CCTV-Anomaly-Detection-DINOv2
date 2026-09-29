@@ -193,7 +193,7 @@ class SetupWizard(tk.Toplevel):
         cam = {
             "id": cam_id,
             "name_var": tk.StringVar(value=f"Camera {cam_id}"),
-            "source_var": tk.StringVar(value=str(cam_id - 1)),
+            "source_var": tk.StringVar(value="0"),
             "status_var": tk.StringVar(value=""),
         }
         self._cameras.append(cam)

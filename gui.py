@@ -11,6 +11,7 @@ Features:
 import os
 import sys
 import time
+import shutil
 import tkinter as tk
 from tkinter import ttk, messagebox, simpledialog
 from PIL import Image, ImageTk
@@ -21,6 +22,7 @@ import Globals as gb
 from mask_editor import MaskEditor
 from settings_store import save_settings
 from calibration_session import SessionState, CalibrationSession
+from capture_registry import CaptureRegistry
 
 CANVAS_W = 480
 CANVAS_H = 360
@@ -642,21 +644,73 @@ class AnomalyDetectionGUI:
         return self._running
 
     def _on_reset_clicked(self):
-        confirmed = messagebox.askyesno(
+        # --- First confirmation ---
+        confirmed1 = messagebox.askyesno(
             "Reset Application",
-            "Are you sure? This will delete saved settings and restart into the Setup Wizard.",
+            "This will permanently delete ALL saved data:\n"
+            "  • Camera configuration (settings.json)\n"
+            "  • All calibration data\n"
+            "  • All zone masks\n"
+            "  • Heartbeat and watchdog logs\n\n"
+            "The application will restart from the Setup Wizard.\n\n"
+            "Are you sure you want to continue?",
             parent=self.root,
             icon="warning"
         )
-        if not confirmed:
+        if not confirmed1:
             return
 
-        settings_path = os.path.join("Assets", "settings.json")
-        if os.path.exists(settings_path):
-            try:
-                os.remove(settings_path)
-            except OSError as e:
-                print(f"[Reset] Error deleting {settings_path}: {e}")
+        # --- Second confirmation ---
+        confirmed2 = messagebox.askyesno(
+            "Confirm Full Reset",
+            "This is your final confirmation.\n\n"
+            "ALL data will be wiped and CANNOT be recovered.\n\n"
+            "Proceed with full reset?",
+            parent=self.root,
+            icon="warning"
+        )
+        if not confirmed2:
+            return
+
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        assets_dir = os.path.join(base_dir, "Assets")
+
+        # Paths to wipe
+        wipe_files = [
+            os.path.join(assets_dir, "settings.json"),
+            os.path.join(assets_dir, "heartbeat.txt"),
+            os.path.join(assets_dir, "app.pid"),
+            os.path.join(assets_dir, "watchdog_restart_log.json"),
+            os.path.join(assets_dir, "watchdog_log.txt"),
+        ]
+        wipe_dirs = [
+            os.path.join(assets_dir, "calibration"),
+            os.path.join(assets_dir, "masks"),
+        ]
+
+        for path in wipe_files:
+            if os.path.exists(path):
+                try:
+                    os.remove(path)
+                    print(f"[Reset] Deleted {path}")
+                except OSError as e:
+                    print(f"[Reset] Error deleting {path}: {e}")
+
+        for path in wipe_dirs:
+            if os.path.exists(path):
+                try:
+                    shutil.rmtree(path)
+                    print(f"[Reset] Deleted directory {path}")
+                except OSError as e:
+                    print(f"[Reset] Error deleting directory {path}: {e}")
+
+        # Release all video capture handles BEFORE exec so the new process
+        # inherits no open /dev/video* file descriptors (fixes source=0
+        # "cannot open" on re-launch after reset).
+        try:
+            CaptureRegistry().release_all()
+        except Exception as e:
+            print(f"[Reset] Warning: release_all failed: {e}")
 
         self._running = False
         self.root.destroy()
